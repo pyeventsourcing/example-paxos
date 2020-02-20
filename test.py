@@ -66,7 +66,7 @@ class TestPaxosSystem(unittest.TestCase):
 
     @retry((KeyError, AssertionError), max_attempts=100, wait=0.05, stall=0)
     def assert_final_value(self, process, id, value):
-        self.assertEqual(process.repository[id].final_value, value)
+        self.assertEqual(process.get_final_value(id), value)
 
     def close_connections_before_forking(self):
         """Implemented by the DjangoTestCase class."""

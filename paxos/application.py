@@ -96,8 +96,6 @@ class PaxosApplication(ProcessApplication[PaxosAggregate, PaxosAggregate.Event])
                 paxos.receive_message(msg)
 
             return paxos
-        else:
-            return None
 
 
 class PaxosSystem(System):
@@ -112,8 +110,6 @@ class PaxosSystem(System):
             )
             for i in range(num_participants)
         ]
-        if num_participants > 1:
-            pipelines = [[c[0], c[1], c[0]] for c in itertools.combinations(classes, 2)]
-        else:
-            pipelines = [classes]
+        assert num_participants > 1
+        pipelines = [[c[0], c[1], c[0]] for c in itertools.combinations(classes, 2)]
         super(PaxosSystem, self).__init__(*pipelines, **kwargs)
