@@ -27,7 +27,6 @@ class PaxosAggregate(BaseAggregateRoot):
         "acceptors",
         "final_value",
     ]
-    is_verbose = False
 
     def __init__(self, quorum_size: int, network_uid: str, **kwargs: Any):
         assert isinstance(quorum_size, int)
@@ -112,8 +111,7 @@ class PaxosAggregate(BaseAggregateRoot):
         """
         Proposes a value to the network.
         """
-        if value is None:
-            raise ValueError("Not allowed to propose value None")
+        assert value is not None, "Not allowed to propose value None"
         paxos = self.paxos_instance
         paxos.leader = assume_leader
         msg = paxos.propose_value(value)
@@ -127,37 +125,25 @@ class PaxosAggregate(BaseAggregateRoot):
         """
         Responds to messages from other participants.
         """
-        if isinstance(msg, Resolution):
-            return
-        paxos = self.paxos_instance
-        while msg:
-            if isinstance(msg, Resolution):
-                self.print_if_verbose(
-                    "{} resolved value {}".format(self.network_uid, msg.value)
-                )
-                break
-            else:
-                self.print_if_verbose(
-                    "{} <- {} <- {}".format(
-                        self.network_uid, msg.__class__.__name__, msg.from_uid
-                    )
-                )
-                msg = paxos.receive(msg)
-                # Todo: Make it optional not to announce resolution
-                #  (without which it's hard to see final value).
-                do_announce_resolution = True
-                if msg and (do_announce_resolution or not isinstance(msg, Resolution)):
-                    self.announce(msg)
+        if not isinstance(msg, Resolution):
+            paxos = self.paxos_instance
+            while msg:
+                if isinstance(msg, Resolution):
+                    break
+                else:
+                    msg = paxos.receive(msg)
+                    # Todo: Make it optional not to announce resolution
+                    #  (without which it's hard to see final value).
+                    do_announce_resolution = True
+                    if msg and (do_announce_resolution or not isinstance(msg, Resolution)):
+                        self.announce(msg)
 
-        self.setattrs_from_paxos(paxos)
+            self.setattrs_from_paxos(paxos)
 
     def announce(self, msg: PaxosMessage) -> None:
         """
         Announces a Paxos message.
         """
-        self.print_if_verbose(
-            "{} -> {}".format(self.network_uid, msg.__class__.__name__)
-        )
         self.__trigger_event__(event_class=self.MessageAnnounced, msg=msg)
 
     class MessageAnnounced(Event):
@@ -177,26 +163,7 @@ class PaxosAggregate(BaseAggregateRoot):
         for name in self.paxos_variables:
             paxos_value = getattr(paxos, name)
             if paxos_value != getattr(self, name, None):
-                self.print_if_verbose(
-                    "{} {}: {}".format(self.network_uid, name, paxos_value)
-                )
                 changes[name] = paxos_value
                 setattr(self, name, paxos_value)
         if changes:
             self.__trigger_event__(event_class=self.AttributesChanged, changes=changes)
-
-    def print_if_verbose(self, param: Any) -> None:
-        if self.is_verbose:
-            print(param)
-
-    def __str__(self) -> str:
-        return (
-            "PaxosAggregate("
-            "final_value='{final_value}', "
-            "proposed_value='{proposed_value}', "
-            "network_uid='{network_uid}', "
-            "proposal_id='{proposal_id}', "
-            "promised_id='{promised_id}', "
-            "promises_received='{promises_received}'"
-            ")"
-        ).format(**self.__dict__)
