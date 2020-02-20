@@ -1,2 +1,2 @@
 # eventsourcing[sqlalchemy]==8.1.1dev0
-git+git://github.com/johnbywater/eventsourcing@develop#egg=eventsourcing [sqlalchemy,django,ray]
+git+git://github.com/johnbywater/eventsourcing@develop#egg=eventsourcing [sqlalchemy]
