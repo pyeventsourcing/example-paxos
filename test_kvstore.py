@@ -3,7 +3,7 @@ import random
 import unittest
 from threading import Thread
 from time import sleep, time
-from typing import cast
+from typing import Any, cast
 
 from eventsourcing.application import AggregateNotFound
 from eventsourcing.postgres import PostgresDatastore
@@ -103,14 +103,14 @@ class TestKVStore(unittest.TestCase):
         return cast(KVStore, self.runner.apps.get(name))
 
     @retry((AggregateNotFound, AssertionError), max_attempts=1000, wait=0.3)
-    def assert_query(self, app, cmd, value):
-        self.assertEqual(app.do_command(cmd), value)
+    def assert_query(self, app: KVStore, cmd_text: str, expected_value: Any):
+        self.assertEqual(app.do_command(cmd_text), expected_value)
 
     def close_connections_before_forking(self):
         """Implemented by the DjangoTestCase class."""
         pass
 
-    def test_performance(self):
+    def _test_performance(self):
 
         apps = [self.get_paxos_app(f"KVStore{i}") for i in range(self.num_participants)]
 
