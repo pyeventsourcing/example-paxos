@@ -1,13 +1,13 @@
 from copy import deepcopy
-from typing import Any, Set, Dict, Optional
+from typing import Any, Set, Dict
 from uuid import UUID
 
-from eventsourcing.domain.model.aggregate import BaseAggregateRoot
+from eventsourcing.domain import Aggregate, event
 
 from paxos.composable import ProposalStatus, PaxosInstance, PaxosMessage, Resolution
 
 
-class PaxosAggregate(BaseAggregateRoot):
+class PaxosAggregate(Aggregate):
     """
     Event-sourced Paxos participant.
     """
@@ -59,37 +59,21 @@ class PaxosAggregate(BaseAggregateRoot):
         # Return the instance.
         return instance
 
-    class Event(BaseAggregateRoot.Event["PaxosAggregate"]):
-        """
-        Base event class for PaxosAggregate.
-        """
-
-    class Started(Event, BaseAggregateRoot.Created["PaxosAggregate"]):
+    class Started(Aggregate.Created["PaxosAggregate"]):
         """
         Published when a PaxosAggregate is started.
         """
+        quorum_size: int
+        network_uid: str
 
-        __notifiable__ = False
-
-    class AttributesChanged(Event):
+    class AttributesChanged(Aggregate.Event):
         """
         Published when attributes of paxos_instance are changed.
         """
+        changes: Dict
 
-        __notifiable__ = False
-
-        def __init__(self, changes: Optional[Dict[str, Any]] = None, **kwargs: Any):
-            super(PaxosAggregate.AttributesChanged, self).__init__(
-                changes=changes, **kwargs
-            )
-
-        @property
-        def changes(self) -> Dict[str, Any]:
-            return self.__dict__["changes"]
-
-        def mutate(self, obj: "PaxosAggregate") -> None:
-            for name, value in self.changes.items():
-                setattr(obj, name, value)
+        def apply(self, obj: "PaxosAggregate") -> None:
+            obj.__dict__.update(self.changes)
 
     @classmethod
     def start(
@@ -99,10 +83,9 @@ class PaxosAggregate(BaseAggregateRoot):
         Factory method that returns a new Paxos aggregate.
         """
         assert isinstance(quorum_size, int), "Not an integer: {}".format(quorum_size)
-        started_class = cls.Started
-        return cls.__create__(
-            originator_id=originator_id,
-            event_class=started_class,
+        return cls._create(
+            event_class=cls.Started,
+            id=originator_id,
             quorum_size=quorum_size,
             network_uid=network_uid,
         )
@@ -125,10 +108,12 @@ class PaxosAggregate(BaseAggregateRoot):
         """
         Responds to messages from other participants.
         """
+        resolution_msg = None
         if not isinstance(msg, Resolution):
             paxos = self.paxos_instance
             while msg:
                 if isinstance(msg, Resolution):
+                    resolution_msg = msg
                     break
                 else:
                     msg = paxos.receive(msg)
@@ -139,21 +124,20 @@ class PaxosAggregate(BaseAggregateRoot):
                         self.announce(msg)
 
             self.setattrs_from_paxos(paxos)
+        return resolution_msg
 
+    class MessageAnnounced(Aggregate.Event):
+        """
+        Published when a Paxos message is announced.
+        """
+        msg: PaxosMessage
+
+    # @event("MessageAnnounced")
     def announce(self, msg: PaxosMessage) -> None:
         """
         Announces a Paxos message.
         """
-        self.__trigger_event__(event_class=self.MessageAnnounced, msg=msg)
-
-    class MessageAnnounced(Event):
-        """
-        Published when a Paxos message is announced.
-        """
-
-        @property
-        def msg(self) -> PaxosMessage:
-            return self.__dict__["msg"]
+        self.trigger_event(event_class=self.MessageAnnounced, msg=msg)
 
     def setattrs_from_paxos(self, paxos: PaxosInstance) -> None:
         """
@@ -166,4 +150,4 @@ class PaxosAggregate(BaseAggregateRoot):
                 changes[name] = paxos_value
                 setattr(self, name, paxos_value)
         if changes:
-            self.__trigger_event__(event_class=self.AttributesChanged, changes=changes)
+            self.trigger_event(event_class=self.AttributesChanged, changes=changes)
