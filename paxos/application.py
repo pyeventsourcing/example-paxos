@@ -1,15 +1,23 @@
 import itertools
-from typing import Any, Dict, List
+from typing import Any, Dict, Type
 from uuid import UUID
 
 from eventsourcing.application import AggregateNotFound, ProcessEvent
-from eventsourcing.domain import AggregateEvent, TAggregate
-from eventsourcing.persistence import PersistenceError, Transcoder, Transcoding
+from eventsourcing.domain import Aggregate, AggregateEvent, TAggregate
+from eventsourcing.persistence import Transcoder, Transcoding
 from eventsourcing.system import ProcessApplication, System
-from eventsourcing.utils import retry
 
-from paxos.composable import Accept, Accepted, Nack, PaxosMessage, Prepare, Promise, ProposalID, ProposalStatus, \
-    Resolution
+from paxos.composable import (
+    Accept,
+    Accepted,
+    Nack,
+    PaxosMessage,
+    Prepare,
+    Promise,
+    ProposalID,
+    ProposalStatus,
+    Resolution,
+)
 from paxos.domainmodel import PaxosAggregate
 
 
@@ -22,42 +30,42 @@ class ObjAsDict(Transcoding):
 
 
 class ProposalIDAsDict(ObjAsDict):
-    name = 'proposal_id'
+    name = "proposal_id"
     type = ProposalID
 
 
 class PrepareAsDict(ObjAsDict):
-    name = 'prepare'
+    name = "prepare"
     type = Prepare
 
 
 class PromiseAsDict(ObjAsDict):
-    name = 'promise'
+    name = "promise"
     type = Promise
 
 
 class AcceptAsDict(ObjAsDict):
-    name = 'accept'
+    name = "accept"
     type = Accept
 
 
 class AcceptedAsDict(ObjAsDict):
-    name = 'accepted'
+    name = "accepted"
     type = Accepted
 
 
 class NackAsDict(ObjAsDict):
-    name = 'nack'
+    name = "nack"
     type = Nack
 
 
 class ResolutionAsDict(ObjAsDict):
-    name = 'resolution'
+    name = "resolution"
     type = Resolution
 
 
 class ProposalStatusAsDict(Transcoding):
-    name = 'proposal_status'
+    name = "proposal_status"
     type = ProposalStatus
 
     def encode(self, obj: Any) -> Any:
@@ -77,7 +85,7 @@ class ProposalStatusAsDict(Transcoding):
 
 
 class SetAsList(Transcoding):
-    name = 'set'
+    name = "set"
     type = set
 
     def encode(self, obj: Any) -> Any:
@@ -87,7 +95,7 @@ class SetAsList(Transcoding):
         return set(data)
 
 
-class PaxosApplication(ProcessApplication[PaxosAggregate]):
+class PaxosApplication(ProcessApplication[Aggregate]):
     quorum_size: int = 0
     notification_log_section_size = 5
     use_cache = True
@@ -171,7 +179,7 @@ class PaxosApplication(ProcessApplication[PaxosAggregate]):
             #     self.repository.put_entity_in_cache(paxos.id, paxos)
         # Absolutely make sure the participant aggregates aren't getting confused.
         assert (
-                paxos.network_uid == self.name
+            paxos.network_uid == self.name
         ), "Wrong paxos aggregate: required network_uid {}, got {}".format(
             self.name, paxos.network_uid
         )
@@ -190,13 +198,14 @@ class PaxosApplication(ProcessApplication[PaxosAggregate]):
 
 
 class PaxosSystem(System):
-    def __init__(self, num_participants: int = 3, **kwargs: Any):
+    def __init__(self, app_class: Type[PaxosApplication], num_participants: int):
+        self.app_class = app_class
         self.num_participants = num_participants
         self.quorum_size = (num_participants + 2) // 2
         classes = [
             type(
-                "PaxosApplication{}".format(i),
-                (PaxosApplication,),
+                f"{self.app_class.__name__}{i}",
+                (self.app_class,),
                 {"quorum_size": self.quorum_size},
             )
             for i in range(num_participants)

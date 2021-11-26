@@ -1,19 +1,27 @@
-from uuid import NAMESPACE_URL, uuid5
+from typing import Optional
+from uuid import NAMESPACE_URL, UUID, uuid5
 
 from eventsourcing.domain import Aggregate, event
+
+
+def create_kv_aggregate_id(key_name: str):
+    return uuid5(NAMESPACE_URL, f"/keys/{key_name}")
+
+
+def create_paxos_aggregate_id(aggregate_id: UUID, aggregate_version: Optional[int]):
+    return uuid5(NAMESPACE_URL, f"/proposals/{aggregate_id}/{aggregate_version}")
 
 
 class KVAggregate(Aggregate):
     def __init__(self, key_name):
         self.key_name = key_name
 
-    @staticmethod
-    def create_id(key_name):
-        return uuid5(NAMESPACE_URL, f"/keys/{key_name}")
+    class Created(Aggregate.Created["KVAggregate"]):
+        key_name: str
 
-    @staticmethod
-    def create_paxos_id(aggregate_id, aggregate_version):
-        return uuid5(NAMESPACE_URL, f"/paxos/{aggregate_id}/{aggregate_version}")
+    @classmethod
+    def create(cls, id: UUID, key_name: str):
+        return cls._create(event_class=cls.Created, id=id, key_name=key_name)
 
 
 class HashAggregate(KVAggregate):
@@ -21,9 +29,20 @@ class HashAggregate(KVAggregate):
         super().__init__(key_name)
         self.hash = {}
 
+    @staticmethod
+    def create_id(key_name: str):
+        return create_kv_aggregate_id(key_name)
+
+    class Created(KVAggregate.Created):
+        pass
+
     def get_field_value(self, field_name):
         return self.hash.get(field_name, None)
 
     @event("FieldValueSet")
     def set_field_value(self, field_name, field_value):
         self.hash[field_name] = field_value
+
+    @event("FieldValueDeleted")
+    def del_field_value(self, field_name):
+        del self.hash[field_name]

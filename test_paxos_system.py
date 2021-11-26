@@ -26,42 +26,41 @@ def drop_postgres_table(datastore: PostgresDatastore, table_name):
 
 
 class TestPaxosSystem(unittest.TestCase):
-
     def setUp(self):
         # Use the same system object in all tests.
 
-        os.environ['INFRASTRUCTURE_FACTORY'] = 'eventsourcing.postgres:Factory'
-        os.environ["POSTGRES_DBNAME"] = "eventsourcing"
-        os.environ["POSTGRES_HOST"] = "127.0.0.1"
-        os.environ["POSTGRES_PORT"] = "5432"
-        os.environ["POSTGRES_USER"] = "eventsourcing"
-        os.environ["POSTGRES_PASSWORD"] = "eventsourcing"
-
-        db = PostgresDatastore(
-            os.getenv("POSTGRES_DBNAME"),
-            os.getenv("POSTGRES_HOST"),
-            os.getenv("POSTGRES_PORT"),
-            os.getenv("POSTGRES_USER"),
-            os.getenv("POSTGRES_PASSWORD"),
-        )
-        drop_postgres_table(db, "paxosapplication0_events")
-        drop_postgres_table(db, "paxosapplication0_snapshots")
-        drop_postgres_table(db, "paxosapplication0_tracking")
-        drop_postgres_table(db, "paxosapplication1_events")
-        drop_postgres_table(db, "paxosapplication1_snapshots")
-        drop_postgres_table(db, "paxosapplication1_tracking")
-        drop_postgres_table(db, "paxosapplication2_events")
-        drop_postgres_table(db, "paxosapplication2_snapshots")
-        drop_postgres_table(db, "paxosapplication2_tracking")
-
-
+        # os.environ['INFRASTRUCTURE_FACTORY'] = 'eventsourcing.postgres:Factory'
+        # os.environ["POSTGRES_DBNAME"] = "eventsourcing"
+        # os.environ["POSTGRES_HOST"] = "127.0.0.1"
+        # os.environ["POSTGRES_PORT"] = "5432"
+        # os.environ["POSTGRES_USER"] = "eventsourcing"
+        # os.environ["POSTGRES_PASSWORD"] = "eventsourcing"
+        #
+        # db = PostgresDatastore(
+        #     os.getenv("POSTGRES_DBNAME"),
+        #     os.getenv("POSTGRES_HOST"),
+        #     os.getenv("POSTGRES_PORT"),
+        #     os.getenv("POSTGRES_USER"),
+        #     os.getenv("POSTGRES_PASSWORD"),
+        # )
+        # drop_postgres_table(db, "paxosapplication0_events")
+        # drop_postgres_table(db, "paxosapplication0_snapshots")
+        # drop_postgres_table(db, "paxosapplication0_tracking")
+        # drop_postgres_table(db, "paxosapplication1_events")
+        # drop_postgres_table(db, "paxosapplication1_snapshots")
+        # drop_postgres_table(db, "paxosapplication1_tracking")
+        # drop_postgres_table(db, "paxosapplication2_events")
+        # drop_postgres_table(db, "paxosapplication2_snapshots")
+        # drop_postgres_table(db, "paxosapplication2_tracking")
+        #
+        #
         # os.environ['INFRASTRUCTURE_FACTORY'] = 'eventsourcing.sqlite:Factory'
         # os.environ['PAXOSAPPLICATION0_SQLITE_DBNAME'] = 'file:application0?mode=memory&cache=shared'
         # os.environ['PAXOSAPPLICATION1_SQLITE_DBNAME'] = 'file:application1?mode=memory&cache=shared'
         # os.environ['PAXOSAPPLICATION2_SQLITE_DBNAME'] = 'file:application2?mode=memory&cache=shared'
 
         # os.environ['COMPRESSOR_TOPIC'] = 'zlib'
-        self.system = PaxosSystem()
+        self.system = PaxosSystem(PaxosApplication, 3)
         # self.runner = SingleThreadedRunner(self.system)
         self.runner = MultiThreadedRunner(self.system)
         self.runner.start()
@@ -87,7 +86,7 @@ class TestPaxosSystem(unittest.TestCase):
         self.assert_final_value(paxosapplication0, key1, value1)
         self.assert_final_value(paxosapplication1, key1, value1)
         self.assert_final_value(paxosapplication2, key1, value1)
-        print("Resolved paxos 1 with single thread in %ss" % ended1)
+        print("Resolved paxos proposal 1 with single thread in %ss" % ended1)
 
         started2 = datetime.datetime.now()
         paxosapplication1.propose_value(key2, value2)
@@ -97,7 +96,7 @@ class TestPaxosSystem(unittest.TestCase):
         self.assert_final_value(paxosapplication0, key2, value2)
         self.assert_final_value(paxosapplication1, key2, value2)
         self.assert_final_value(paxosapplication2, key2, value2)
-        print("Resolved paxos 2 with single thread in %ss" % ended2)
+        print("Resolved paxos proposal 2 with single thread in %ss" % ended2)
 
         started3 = datetime.datetime.now()
         paxosapplication2.propose_value(key3, value3)
@@ -107,12 +106,12 @@ class TestPaxosSystem(unittest.TestCase):
         self.assert_final_value(paxosapplication0, key3, value3)
         self.assert_final_value(paxosapplication1, key3, value3)
         self.assert_final_value(paxosapplication2, key3, value3)
-        print("Resolved paxos 3 with single thread in %ss" % ended3)
+        print("Resolved paxos proposal 3 with single thread in %ss" % ended3)
 
     def get_paxos_app(self, application_name) -> PaxosApplication:
         return cast(PaxosApplication, self.runner.apps.get(application_name))
 
-    @retry((AggregateNotFound, AssertionError), max_attempts=500, wait=0.1, stall=0)
+    @retry((AggregateNotFound, AssertionError), max_attempts=500, wait=0.01, stall=0)
     def assert_final_value(self, process, id, value):
         self.assertEqual(process.get_final_value(id), value)
 
@@ -121,7 +120,7 @@ class TestPaxosSystem(unittest.TestCase):
         pass
 
     def test_performance(self):
-        n = 100
+        n = 10
         keys_and_values = {uuid4(): i for i in range(n)}
 
         app0 = self.get_paxos_app("PaxosApplication0")
@@ -143,5 +142,6 @@ class TestPaxosSystem(unittest.TestCase):
 
         duration = time() - started
 
-        print(f"Resolved {n} in {duration}s: {duration/n}s per item; {n/duration} per sec")
-
+        print(
+            f"Resolved {n} paxos proposals in {duration}s: {duration/n}s per item; {n/duration} per sec"
+        )

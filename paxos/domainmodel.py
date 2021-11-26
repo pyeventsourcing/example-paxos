@@ -37,7 +37,7 @@ class PaxosAggregate(Aggregate):
         self.leader = False
         self.proposals: Dict[str, ProposalStatus] = {}
         self.acceptors: Dict[str, str] = {}
-        self.final_value = None
+        self.final_value: Any = None
         super(PaxosAggregate, self).__init__(**kwargs)
 
     @property
@@ -63,6 +63,7 @@ class PaxosAggregate(Aggregate):
         """
         Published when a PaxosAggregate is started.
         """
+
         quorum_size: int
         network_uid: str
 
@@ -70,6 +71,7 @@ class PaxosAggregate(Aggregate):
         """
         Published when attributes of paxos_instance are changed.
         """
+
         changes: Dict
 
         def apply(self, obj: "PaxosAggregate") -> None:
@@ -120,7 +122,9 @@ class PaxosAggregate(Aggregate):
                     # Todo: Make it optional not to announce resolution
                     #  (without which it's hard to see final value).
                     do_announce_resolution = True
-                    if msg and (do_announce_resolution or not isinstance(msg, Resolution)):
+                    if msg and (
+                        do_announce_resolution or not isinstance(msg, Resolution)
+                    ):
                         self.announce(msg)
 
             self.setattrs_from_paxos(paxos)
@@ -130,6 +134,7 @@ class PaxosAggregate(Aggregate):
         """
         Published when a Paxos message is announced.
         """
+
         msg: PaxosMessage
 
     # @event("MessageAnnounced")
