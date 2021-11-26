@@ -2,7 +2,16 @@ from typing import Any, Dict
 
 from eventsourcing.persistence import Transcoding
 
-from paxos.composable import Accept, Accepted, Nack, Prepare, Promise, ProposalID, ProposalStatus, Resolution
+from paxos.composable import (
+    Accept,
+    Accepted,
+    Nack,
+    Prepare,
+    Promise,
+    ProposalID,
+    ProposalStatus,
+    Resolution,
+)
 
 
 class ObjAsDict(Transcoding):

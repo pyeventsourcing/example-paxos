@@ -10,8 +10,17 @@ from paxos.composable import (
     PaxosMessage,
 )
 from paxos.domainmodel import PaxosAggregate
-from paxos.transcodings import AcceptAsDict, AcceptedAsDict, NackAsDict, PrepareAsDict, PromiseAsDict, \
-    ProposalIDAsDict, ProposalStatusAsDict, ResolutionAsDict, SetAsList
+from paxos.transcodings import (
+    AcceptAsDict,
+    AcceptedAsDict,
+    NackAsDict,
+    PrepareAsDict,
+    PromiseAsDict,
+    ProposalIDAsDict,
+    ProposalStatusAsDict,
+    ResolutionAsDict,
+    SetAsList,
+)
 
 
 class PaxosApplication(ProcessApplication[Aggregate]):
@@ -114,5 +123,3 @@ class PaxosApplication(ProcessApplication[Aggregate]):
         # if resolution_msg:
         #     print("Final value:", paxos.final_value)
         return paxos, resolution_msg
-
-

@@ -15,13 +15,13 @@ from eventsourcing.tests.ramdisk import tmpfile_uris
 from eventsourcing.utils import retry
 
 from kvstore.application import (
-    AggregateVersionMismatch,
     CommandFuture,
     KVStore,
     execute_proposal,
     propose_command,
     split,
 )
+from kvstore.exceptions import AggregateVersionMismatch
 from kvstore.domainmodel import HashAggregate
 from paxos.system import PaxosSystem
 from test_paxos_system import drop_postgres_table
