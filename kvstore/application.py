@@ -1,46 +1,26 @@
-import itertools
 import shlex
 from concurrent.futures import Future
-from dataclasses import dataclass
 from decimal import Decimal
 from queue import Queue
 from threading import RLock
 from time import time
-from typing import Any, Dict, List, Optional, cast
+from typing import Dict, List, Optional, cast
 from uuid import UUID
 
 from eventsourcing.application import AggregateNotFound, ProcessEvent, Repository
 from eventsourcing.domain import Aggregate, AggregateEvent, TAggregate
-from eventsourcing.persistence import IntegrityError, Transcoder, Transcoding
-from eventsourcing.system import System
+from eventsourcing.persistence import IntegrityError, Transcoder
 from eventsourcing.utils import get_topic
 
 from kvstore.domainmodel import (
-    HashAggregate,
+    AppliesTo, HashAggregate,
     KVAggregate,
-    create_kv_aggregate_id,
+    KVProposal, PaxosProposal, create_kv_aggregate_id,
     create_paxos_aggregate_id,
 )
+from kvstore.transcodings import AppliesToAsList, KVProposalAsList
 from paxos.application import PaxosApplication
 from paxos.domainmodel import PaxosAggregate
-
-
-@dataclass
-class AppliesTo:
-    aggregate_id: UUID
-    aggregate_version: Optional[int]
-
-
-@dataclass
-class KVProposal:
-    cmd: List[str]
-    applies_to: AppliesTo
-
-
-@dataclass
-class PaxosProposal:
-    key: UUID
-    value: KVProposal
 
 
 def propose_command(app: "KVStore", cmd_text: str) -> PaxosProposal:
@@ -334,28 +314,6 @@ class Cache:
                 self.full = self.cache.__len__() >= self.maxsize
 
 
-class KVProposalAsList(Transcoding):
-    name = "k_v_proposal"
-    type = KVProposal
-
-    def encode(self, obj: KVProposal) -> List:
-        return [obj.cmd, obj.applies_to]
-
-    def decode(self, data: List) -> KVProposal:
-        return KVProposal(*data)
-
-
-class AppliesToAsList(Transcoding):
-    name = "applies_to"
-    type = AppliesTo
-
-    def encode(self, obj: AppliesTo) -> List:
-        return [obj.aggregate_id, obj.aggregate_version]
-
-    def decode(self, data: List) -> AppliesTo:
-        return AppliesTo(*data)
-
-
 class CommandFuture(Future):
     def __init__(self, results_queue: "Optional[Queue[CommandFuture]]"):
         super(CommandFuture, self).__init__()
@@ -448,20 +406,3 @@ class KVStore(PaxosApplication):
             if isinstance(new_event, PaxosAggregate.MessageAnnounced):
                 self.prompt_followers()
                 return
-
-
-class KVSystem(System):
-    def __init__(self, num_participants: int = 3, **kwargs: Any):
-        self.num_participants = num_participants
-        self.quorum_size = (num_participants + 2) // 2
-        classes = [
-            type(
-                "KVStore{}".format(i),
-                (KVStore,),
-                {"quorum_size": self.quorum_size},
-            )
-            for i in range(num_participants)
-        ]
-        assert num_participants > 1
-        pipes = [[c[0], c[1], c[0]] for c in itertools.combinations(classes, 2)]
-        super(KVSystem, self).__init__(pipes)

@@ -1,4 +1,5 @@
-from typing import Optional
+from dataclasses import dataclass
+from typing import List, Optional
 from uuid import NAMESPACE_URL, UUID, uuid5
 
 from eventsourcing.domain import Aggregate, event
@@ -46,3 +47,21 @@ class HashAggregate(KVAggregate):
     @event("FieldValueDeleted")
     def del_field_value(self, field_name):
         del self.hash[field_name]
+
+
+@dataclass
+class AppliesTo:
+    aggregate_id: UUID
+    aggregate_version: Optional[int]
+
+
+@dataclass
+class KVProposal:
+    cmd: List[str]
+    applies_to: AppliesTo
+
+
+@dataclass
+class PaxosProposal:
+    key: UUID
+    value: KVProposal

@@ -23,7 +23,7 @@ from kvstore.application import (
     split,
 )
 from kvstore.domainmodel import HashAggregate
-from paxos.application import PaxosSystem
+from paxos.system import PaxosSystem
 from test_paxos_system import drop_postgres_table
 
 

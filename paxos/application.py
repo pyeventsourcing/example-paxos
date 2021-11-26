@@ -1,98 +1,17 @@
-import itertools
-from typing import Any, Dict, Type
+from typing import Any
 from uuid import UUID
 
 from eventsourcing.application import AggregateNotFound, ProcessEvent
 from eventsourcing.domain import Aggregate, AggregateEvent, TAggregate
-from eventsourcing.persistence import Transcoder, Transcoding
-from eventsourcing.system import ProcessApplication, System
+from eventsourcing.persistence import Transcoder
+from eventsourcing.system import ProcessApplication
 
 from paxos.composable import (
-    Accept,
-    Accepted,
-    Nack,
     PaxosMessage,
-    Prepare,
-    Promise,
-    ProposalID,
-    ProposalStatus,
-    Resolution,
 )
 from paxos.domainmodel import PaxosAggregate
-
-
-class ObjAsDict(Transcoding):
-    def encode(self, obj: object) -> Dict:
-        return obj.__dict__
-
-    def decode(self, data: Dict) -> object:
-        return self.type(**data)
-
-
-class ProposalIDAsDict(ObjAsDict):
-    name = "proposal_id"
-    type = ProposalID
-
-
-class PrepareAsDict(ObjAsDict):
-    name = "prepare"
-    type = Prepare
-
-
-class PromiseAsDict(ObjAsDict):
-    name = "promise"
-    type = Promise
-
-
-class AcceptAsDict(ObjAsDict):
-    name = "accept"
-    type = Accept
-
-
-class AcceptedAsDict(ObjAsDict):
-    name = "accepted"
-    type = Accepted
-
-
-class NackAsDict(ObjAsDict):
-    name = "nack"
-    type = Nack
-
-
-class ResolutionAsDict(ObjAsDict):
-    name = "resolution"
-    type = Resolution
-
-
-class ProposalStatusAsDict(Transcoding):
-    name = "proposal_status"
-    type = ProposalStatus
-
-    def encode(self, obj: Any) -> Any:
-        return {
-            "accept_count": obj.accept_count,
-            "retain_count": obj.retain_count,
-            "acceptors": obj.acceptors,
-            "value": obj.value,
-        }
-
-    def decode(self, data: Any) -> Any:
-        obj = ProposalStatus(data["value"])
-        obj.accept_count = data["accept_count"]
-        obj.retain_count = data["retain_count"]
-        obj.acceptors = data["acceptors"]
-        return obj
-
-
-class SetAsList(Transcoding):
-    name = "set"
-    type = set
-
-    def encode(self, obj: Any) -> Any:
-        return list(obj)
-
-    def decode(self, data: Any) -> Any:
-        return set(data)
+from paxos.transcodings import AcceptAsDict, AcceptedAsDict, NackAsDict, PrepareAsDict, PromiseAsDict, \
+    ProposalIDAsDict, ProposalStatusAsDict, ResolutionAsDict, SetAsList
 
 
 class PaxosApplication(ProcessApplication[Aggregate]):
@@ -197,19 +116,3 @@ class PaxosApplication(ProcessApplication[Aggregate]):
         return paxos, resolution_msg
 
 
-class PaxosSystem(System):
-    def __init__(self, app_class: Type[PaxosApplication], num_participants: int):
-        self.app_class = app_class
-        self.num_participants = num_participants
-        self.quorum_size = (num_participants + 2) // 2
-        classes = [
-            type(
-                f"{self.app_class.__name__}{i}",
-                (self.app_class,),
-                {"quorum_size": self.quorum_size},
-            )
-            for i in range(num_participants)
-        ]
-        assert num_participants > 1
-        pipes = [[c[0], c[1], c[0]] for c in itertools.combinations(classes, 2)]
-        super(PaxosSystem, self).__init__(pipes)
