@@ -1,6 +1,3 @@
-from __future__ import annotations
-
-import os
 import sys
 from queue import Empty, Queue
 from threading import Thread
@@ -9,22 +6,12 @@ from typing import Any, cast
 from unittest import TestCase
 
 from eventsourcing.application import AggregateNotFound
-from eventsourcing.postgres import PostgresDatastore
 from eventsourcing.system import MultiThreadedRunner
-from eventsourcing.tests.ramdisk import tmpfile_uris
 from eventsourcing.utils import retry
 
-from kvstore.application import (
-    CommandFuture,
-    KVStore,
-    execute_proposal,
-    propose_command,
-    split,
-)
-from kvstore.exceptions import AggregateVersionMismatch
-from kvstore.domainmodel import HashAggregate
+from kvstore.application import CommandFuture
+from kvstore.application import KVStore
 from paxos.system import PaxosSystem
-from test_paxos_system import drop_postgres_table
 
 
 class TestKVSystem(TestCase):
@@ -139,6 +126,8 @@ class TestKVSystem(TestCase):
         apps = [self.get_paxos_app(f"KVStore{i}") for i in range(self.num_participants)]
 
         n = 25
+        period = 5
+        interval = 1 / 50
 
         started_times = []
         finished_times = []
@@ -147,13 +136,11 @@ class TestKVSystem(TestCase):
         results_queue: "Queue[CommandFuture]" = Queue()
 
         def write():
-            interval = 1 / 50
             started = time()
             for i in list(range(n + 1)):
                 app = apps[i % self.num_participants]
                 # app = random.choice(apps)
                 # app = apps[0]
-                # started_times.append(now)
                 now = time()
                 started_times.append(now)
                 app.propose_command(
@@ -163,12 +150,9 @@ class TestKVSystem(TestCase):
                 )
                 now = time()
                 sleep_for = max(0, started + (interval * (i + 1)) - now)
-                # print("Sleeping for", sleep_for)
                 sleep(sleep_for)
-                if self.runner.has_stopped.is_set():
+                if self.runner.has_errored.is_set():
                     return
-
-        period = 5
 
         def read():
 
@@ -179,7 +163,7 @@ class TestKVSystem(TestCase):
                     try:
                         future = results_queue.get(timeout=0.5)
                     except Empty:
-                        if self.runner.has_stopped.is_set():
+                        if self.runner.has_errored.is_set():
                             return
                     else:
                         is_queue_empty = False
@@ -203,9 +187,6 @@ class TestKVSystem(TestCase):
                                 )
                                 duration = finished_times[i] - started_times[0]
                                 period_duration = period_started - last_period_started
-                                started_duration = (
-                                    started_times[i] - started_times[i - period]
-                                )
                                 finished_duration = (
                                     i_finished - finished_times[i - period]
                                 )
@@ -214,18 +195,15 @@ class TestKVSystem(TestCase):
                                     f"Completed {i} commands in {duration:.1f}s: "
                                     f"{i/duration:.0f}/s, "
                                     f"{duration/i:.3f}s/item, "
-                                    # f"{period/period_duration:.2f}/s, "
-                                    # f"{period_duration/period:.3f}s/item, "
                                     f"started {period_started_count/period_duration:.0f}/s, "
                                     f"finished {period/finished_duration:.0f}/s, "
                                     f"{finished_duration/period:.3f}s/item, "
                                     f"lat {avg_latency:.3f}s"
                                 )
-                                sys.stdout.flush()
                                 last_period_started = period_started
                                 last_started_count = started_count
 
-                        if self.runner.has_stopped.is_set():
+                        if self.runner.has_errored.is_set():
                             return
 
         thread_write = Thread(target=write, daemon=True)
@@ -235,7 +213,7 @@ class TestKVSystem(TestCase):
         thread_write.join()
         thread_read.join()
 
-        if self.runner.has_stopped.is_set():
+        if self.runner.has_errored.is_set():
             return
 
         rate = n / (finished_times[n] - started_times[0])
@@ -250,152 +228,3 @@ class TestKVSystem(TestCase):
 
         sys.stdout.flush()
         sleep(0.1)
-
-
-class TestKVAggregates(TestCase):
-    def test_hash(self):
-        a = HashAggregate("myhash")
-        self.assertEqual(a.key_name, "myhash")
-        self.assertEqual(a.get_field_value("field"), None)
-        a.set_field_value("field", "value")
-        self.assertEqual(a.get_field_value("field"), "value")
-
-
-class TestKVStore(TestCase):
-    def setUp(self) -> None:
-        self.app = KVStore()
-
-    def test_hset_command(self):
-        # Propose command to set field.
-        proposal = propose_command(self.app, 'HSET myhash field "value"')
-
-        # Execute proposal.
-        hash_aggregate = execute_proposal(self.app, proposal.value)
-
-        # Check field has been set.
-        self.assertIsInstance(hash_aggregate, HashAggregate)
-        self.assertEqual(hash_aggregate.get_field_value("field"), "value")
-
-        # Save the hash aggregate.
-
-        # Check we can't execute same proposal twice.
-        self.app.save(hash_aggregate)
-        with self.assertRaises(AggregateVersionMismatch):
-            execute_proposal(self.app, proposal.value)
-
-        # Propose and execute command to update field.
-        proposal = propose_command(self.app, 'HSET myhash field "value2"')
-        hash_aggregate = execute_proposal(self.app, proposal.value)
-
-        # Check the field has been updated.
-        self.assertIsInstance(hash_aggregate, HashAggregate)
-        self.assertEqual(hash_aggregate.get_field_value("field"), "value2")
-
-        # Check we can't do it twice.
-        self.app.save(hash_aggregate)
-        with self.assertRaises(AggregateVersionMismatch):
-            execute_proposal(self.app, proposal.value)
-
-    def test_hget_command(self):
-        # Save a hash aggregate.
-        hash_aggregate = HashAggregate("myhash")
-        hash_aggregate.set_field_value("field", "value")
-        self.app.save(hash_aggregate)
-
-        # Check we can get the field value.
-        self.assertEqual(self.app.execute_query("HGET myhash field"), "value")
-
-    def test_hdel_command(self):
-        # Save a hash aggregate.
-        hash_aggregate = HashAggregate("myhash")
-        hash_aggregate.set_field_value("field", "value")
-        self.app.save(hash_aggregate)
-
-        # Propose and execute command to del field.
-        proposal = propose_command(self.app, "HDEL myhash field")
-        hash_aggregate = execute_proposal(self.app, proposal.value)
-
-        # Check the field has been deleted.
-        self.assertIsInstance(hash_aggregate, HashAggregate)
-        self.assertEqual(hash_aggregate.get_field_value("field"), None)
-
-    def test_hsetnx_command(self):
-        # Save a hash aggregate.
-        hash_aggregate = HashAggregate("myhash")
-        hash_aggregate.set_field_value("field", "value")
-        self.app.save(hash_aggregate)
-
-        # Propose and execute command to del field.
-        proposal = propose_command(self.app, "HSETNX myhash field value2")
-        hash_aggregate = execute_proposal(self.app, proposal.value)
-
-        # Check existing field has not updated.
-        self.assertIsInstance(hash_aggregate, HashAggregate)
-        self.assertEqual(hash_aggregate.get_field_value("field"), "value")
-
-        # Propose and execute command to del field.
-        proposal = propose_command(self.app, "HSETNX myhash field2 value2")
-        hash_aggregate = execute_proposal(self.app, proposal.value)
-
-        # Check the new field has been set.
-        self.assertIsInstance(hash_aggregate, HashAggregate)
-        self.assertEqual(hash_aggregate.get_field_value("field2"), "value2")
-
-    def test_hincrby_command(self):
-        # Save a hash aggregate.
-        hash_aggregate = HashAggregate("myhash")
-        hash_aggregate.set_field_value("field", "2")
-        self.app.save(hash_aggregate)
-
-        # Propose and execute command to increment field.
-        proposal = propose_command(self.app, "HINCRBY myhash field 5")
-        hash_aggregate = execute_proposal(self.app, proposal.value)
-
-        # Check existing field has been incremented.
-        self.assertIsInstance(hash_aggregate, HashAggregate)
-        self.assertEqual(hash_aggregate.get_field_value("field"), "7")
-
-        # Propose and execute command to decrement field.
-        self.app.save(hash_aggregate)
-        proposal = propose_command(self.app, "HINCRBY myhash field -3")
-        hash_aggregate = execute_proposal(self.app, proposal.value)
-
-        # Check existing field has been decremented.
-        self.assertIsInstance(hash_aggregate, HashAggregate)
-        self.assertEqual(hash_aggregate.get_field_value("field"), "4")
-
-        # Check we can't do it twice.
-        self.app.save(hash_aggregate)
-        with self.assertRaises(AggregateVersionMismatch):
-            execute_proposal(self.app, proposal.value)
-
-
-class TestSplit(TestCase):
-    good_examples = [
-        ('this is "a test"', ["this", "is", "a test"]),
-        ("this is 'a test'", ["this", "is", "a test"]),
-        ('this "is a" test', ["this", "is a", "test"]),
-        ('this "is "a test', ["this", "is a", "test"]),  # ?
-        ('this "is " a test', ["this", "is ", "a", "test"]),
-        ("this 'is ' a test", ["this", "is ", "a", "test"]),
-    ]
-    bad_examples = [
-        ('this "is a" test"', ValueError),
-        ("this 'is a' test'", ValueError),
-        ('this ""is " a test', ValueError),
-    ]
-
-    def test_good_examples(self):
-        for i, example in enumerate(self.good_examples):
-            text, expected = example
-            try:
-                self.assertEqual(expected, split(text))
-            except AssertionError as e:
-                raise AssertionError(i + 1, text) from e
-            except ValueError as e:
-                raise AssertionError(i + 1, text) from e
-
-    def test_bad_examples(self):
-        for text, expected in self.bad_examples:
-            with self.assertRaises(expected):
-                split(text)
