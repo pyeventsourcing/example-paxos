@@ -23,6 +23,7 @@ class Cache:
     This is basically copied from functools.lru_cache. But
     we need to have a put() method, so needed to write this.
     """
+
     sentinel = object()  # unique object used to signal cache misses
     PREV, NEXT, KEY, RESULT = 0, 1, 2, 3  # names for the link fields
 

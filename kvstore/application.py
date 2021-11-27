@@ -8,7 +8,7 @@ from uuid import UUID
 from eventsourcing.application import ProcessEvent, Repository
 from eventsourcing.domain import Aggregate, AggregateEvent, TAggregate
 from eventsourcing.persistence import IntegrityError, Transcoder
-from eventsourcing.utils import get_topic
+from eventsourcing.utils import get_topic, resolve_topic
 
 from kvstore.cache import CachedRepository
 from kvstore.domainmodel import (
@@ -109,11 +109,11 @@ class KVStore(PaxosApplication):
                 return
 
 
-def propose_command(app: "KVStore", cmd_text: str) -> PaxosProposal:
+def propose_command(app: KVStore, cmd_text: str) -> PaxosProposal:
     return Command.construct(split(cmd_text)).create_paxos_proposal(app)
 
 
-def execute_proposal(app: "KVStore", kv_proposal: KVProposal):
+def execute_proposal(app: KVStore, kv_proposal: KVProposal):
     cmd = Command.construct(kv_proposal.cmd)
     return cmd.execute(app, kv_proposal.applies_to)
 
@@ -125,21 +125,20 @@ def split(text: str) -> List[str]:
 class Command:
     @classmethod
     def construct(cls, cmd: List[str]) -> "Command":
-        from kvstore import commands
-
+        commands = resolve_topic("kvstore.commands")
         command_class = commands.__dict__[cmd[0].upper() + "Command"]
         return command_class(cmd)
 
     def __init__(self, cmd: List[str]):
         self.cmd = cmd
 
-    def create_paxos_proposal(self, app: "KVStore") -> PaxosProposal:
+    def create_paxos_proposal(self, app: KVStore) -> PaxosProposal:
         pass
 
-    def do_query(self, app: "KVStore"):
+    def do_query(self, app: KVStore):
         pass
 
-    def execute(self, app: "KVStore", applies_to: AppliesTo) -> KVAggregate:
+    def execute(self, app: KVStore, applies_to: AppliesTo) -> KVAggregate:
         pass
 
 
