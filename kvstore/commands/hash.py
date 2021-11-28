@@ -1,39 +1,15 @@
 from decimal import Decimal
-from typing import Optional, cast
+from typing import Any
 
-from eventsourcing.application import AggregateNotFound
-
-from kvstore.application import KVStore
-from kvstore.commands.base import OperationOnKey
+from kvstore.application import KVCommand, KVStore
 from kvstore.domainmodel import (
     AppliesTo,
-    HashAggregate,
     KVAggregate,
-    create_kv_aggregate_id,
 )
 
 
-class HashCommand(OperationOnKey):
-    @staticmethod
-    def get_hash_aggregate(
-        app: KVStore, applies_to: AppliesTo
-    ) -> Optional[HashAggregate]:
-        return cast(
-            Optional[HashAggregate], OperationOnKey.get_aggregate(app, applies_to)
-        )
-
-    def create_hash_aggregate(self, app: KVStore) -> HashAggregate:
-        aggregate_id = create_kv_aggregate_id(self.key_name)
-        aggregate = HashAggregate.create(aggregate_id, self.key_name)
-        app.repository.cache.put(aggregate_id, aggregate)
-        return aggregate
-
-    def get_or_create_hash_aggregate(
-        self, app: KVStore, applies_to: AppliesTo
-    ) -> HashAggregate:
-        return self.get_hash_aggregate(app, applies_to) or self.create_hash_aggregate(
-            app
-        )
+class HashCommand(KVCommand):
+    pass
 
 
 class HSETCommand(HashCommand):
@@ -46,7 +22,7 @@ class HSETCommand(HashCommand):
         return self.cmd[3]
 
     def execute(self, app: KVStore, applies_to: AppliesTo) -> KVAggregate:
-        aggregate = self.get_or_create_hash_aggregate(app, applies_to)
+        aggregate = app.get_or_create_kv_aggregate(self, applies_to.aggregate_id, applies_to.aggregate_version)
         aggregate.set_field_value(self.field_name, self.field_value)
         return aggregate
 
@@ -61,7 +37,7 @@ class HSETNXCommand(HashCommand):
         return self.cmd[3]
 
     def execute(self, app: KVStore, applies_to: AppliesTo) -> KVAggregate:
-        aggregate = self.get_or_create_hash_aggregate(app, applies_to)
+        aggregate = app.get_or_create_kv_aggregate(self, applies_to.aggregate_id, applies_to.aggregate_version)
         if self.field_name not in aggregate.hash:
             aggregate.set_field_value(self.field_name, self.field_value)
         return aggregate
@@ -77,7 +53,7 @@ class HINCRBYCommand(HashCommand):
         return Decimal(self.cmd[3])
 
     def execute(self, app: KVStore, applies_to: AppliesTo) -> KVAggregate:
-        aggregate = self.get_or_create_hash_aggregate(app, applies_to)
+        aggregate = app.get_or_create_kv_aggregate(self, applies_to.aggregate_id, applies_to.aggregate_version)
         aggregate.set_field_value(
             self.field_name,
             str(
@@ -93,7 +69,7 @@ class HDELCommand(HashCommand):
         return self.cmd[2]
 
     def execute(self, app: KVStore, applies_to: AppliesTo) -> KVAggregate:
-        aggregate = self.get_hash_aggregate(app, applies_to)
+        aggregate = app.get_kv_aggregate(applies_to.aggregate_id, applies_to.aggregate_version)
         if aggregate is not None:
             try:
                 aggregate.del_field_value(self.field_name)
@@ -107,12 +83,8 @@ class HGETCommand(HashCommand):
     def field_name(self) -> str:
         return self.cmd[2]
 
-    def do_query(self, app: KVStore):
-        aggregate_id = create_kv_aggregate_id(self.key_name)
-        try:
-            aggregate = app.repository.get(aggregate_id)
-        except AggregateNotFound:
-            return None
-        else:
-            assert isinstance(aggregate, HashAggregate), aggregate
+    def do_query(self, app: KVStore) -> Any:
+        aggregate_id = KVAggregate.create_id(self.key_name)
+        aggregate = app.get_kv_aggregate(aggregate_id)
+        if aggregate:
             return aggregate.get_field_value(self.field_name)

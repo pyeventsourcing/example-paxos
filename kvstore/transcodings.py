@@ -10,7 +10,7 @@ class KVProposalAsList(Transcoding):
     type = KVProposal
 
     def encode(self, obj: KVProposal) -> List:
-        return [obj.cmd, obj.applies_to]
+        return [obj.cmd_text, obj.applies_to]
 
     def decode(self, data: List) -> KVProposal:
         return KVProposal(*data)

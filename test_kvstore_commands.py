@@ -1,7 +1,7 @@
 from unittest import TestCase
 
-from kvstore.application import KVStore, execute_proposal, propose_command, split
-from kvstore.domainmodel import HashAggregate
+from kvstore.application import KVStore, split
+from kvstore.domainmodel import KVAggregate
 from kvstore.exceptions import AggregateVersionMismatch
 
 
@@ -10,108 +10,107 @@ class TestHashCommands(TestCase):
         self.app = KVStore()
 
     def test_hset_command(self):
-        # Propose command to set field.
-        proposal = propose_command(self.app, 'HSET myhash field "value"')
+        # Create and execute proposal to set field.
+        proposal = self.app.create_proposal('HSET myhash field "value"')
 
         # Execute proposal.
-        hash_aggregate = execute_proposal(self.app, proposal.value)
+        aggregate = self.app.execute_proposal(proposal)
 
         # Check field has been set.
-        self.assertIsInstance(hash_aggregate, HashAggregate)
-        self.assertEqual(hash_aggregate.get_field_value("field"), "value")
+        self.assertEqual(aggregate.get_field_value("field"), "value")
 
         # Save the hash aggregate.
 
         # Check we can't execute same proposal twice.
-        self.app.save(hash_aggregate)
+        self.app.save(aggregate)
         with self.assertRaises(AggregateVersionMismatch):
-            execute_proposal(self.app, proposal.value)
+            self.app.execute_proposal(proposal)
 
         # Propose and execute command to update field.
-        proposal = propose_command(self.app, 'HSET myhash field "value2"')
-        hash_aggregate = execute_proposal(self.app, proposal.value)
+        proposal = self.app.create_proposal('HSET myhash field "value2"')
+        aggregate = self.app.execute_proposal(proposal)
 
         # Check the field has been updated.
-        self.assertIsInstance(hash_aggregate, HashAggregate)
-        self.assertEqual(hash_aggregate.get_field_value("field"), "value2")
+        self.assertIsInstance(aggregate, KVAggregate)
+        self.assertEqual(aggregate.get_field_value("field"), "value2")
 
         # Check we can't do it twice.
-        self.app.save(hash_aggregate)
+        self.app.save(aggregate)
         with self.assertRaises(AggregateVersionMismatch):
-            execute_proposal(self.app, proposal.value)
+            self.app.execute_proposal(proposal)
 
     def test_hget_command(self):
         # Save a hash aggregate.
-        hash_aggregate = HashAggregate("myhash")
-        hash_aggregate.set_field_value("field", "value")
-        self.app.save(hash_aggregate)
+        aggregate = KVAggregate("myhash")
+        aggregate.set_field_value("field", "value")
+        self.app.save(aggregate)
 
         # Check we can get the field value.
         self.assertEqual(self.app.execute_query("HGET myhash field"), "value")
 
     def test_hdel_command(self):
         # Save a hash aggregate.
-        hash_aggregate = HashAggregate("myhash")
-        hash_aggregate.set_field_value("field", "value")
-        self.app.save(hash_aggregate)
+        aggregate = KVAggregate("myhash")
+        aggregate.set_field_value("field", "value")
+        self.app.save(aggregate)
 
         # Propose and execute command to del field.
-        proposal = propose_command(self.app, "HDEL myhash field")
-        hash_aggregate = execute_proposal(self.app, proposal.value)
+        proposal = self.app.create_proposal("HDEL myhash field")
+        aggregate = self.app.execute_proposal(proposal)
 
         # Check the field has been deleted.
-        self.assertIsInstance(hash_aggregate, HashAggregate)
-        self.assertEqual(hash_aggregate.get_field_value("field"), None)
+        self.assertIsInstance(aggregate, KVAggregate)
+        self.assertEqual(aggregate.get_field_value("field"), None)
 
     def test_hsetnx_command(self):
         # Save a hash aggregate.
-        hash_aggregate = HashAggregate("myhash")
-        hash_aggregate.set_field_value("field", "value")
-        self.app.save(hash_aggregate)
+        aggregate = KVAggregate("myhash")
+        aggregate.set_field_value("field", "value")
+        self.app.save(aggregate)
 
         # Propose and execute command to del field.
-        proposal = propose_command(self.app, "HSETNX myhash field value2")
-        hash_aggregate = execute_proposal(self.app, proposal.value)
+        proposal = self.app.create_proposal("HSETNX myhash field value2")
+        aggregate = self.app.execute_proposal(proposal)
 
         # Check existing field has not updated.
-        self.assertIsInstance(hash_aggregate, HashAggregate)
-        self.assertEqual(hash_aggregate.get_field_value("field"), "value")
+        self.assertIsInstance(aggregate, KVAggregate)
+        self.assertEqual(aggregate.get_field_value("field"), "value")
 
         # Propose and execute command to del field.
-        proposal = propose_command(self.app, "HSETNX myhash field2 value2")
-        hash_aggregate = execute_proposal(self.app, proposal.value)
+        proposal = self.app.create_proposal("HSETNX myhash field2 value2")
+        aggregate = self.app.execute_proposal(proposal)
 
         # Check the new field has been set.
-        self.assertIsInstance(hash_aggregate, HashAggregate)
-        self.assertEqual(hash_aggregate.get_field_value("field2"), "value2")
+        self.assertIsInstance(aggregate, KVAggregate)
+        self.assertEqual(aggregate.get_field_value("field2"), "value2")
 
     def test_hincrby_command(self):
         # Save a hash aggregate.
-        hash_aggregate = HashAggregate("myhash")
-        hash_aggregate.set_field_value("field", "2")
-        self.app.save(hash_aggregate)
+        aggregate = KVAggregate("myhash")
+        aggregate.set_field_value("field", "2")
+        self.app.save(aggregate)
 
         # Propose and execute command to increment field.
-        proposal = propose_command(self.app, "HINCRBY myhash field 5")
-        hash_aggregate = execute_proposal(self.app, proposal.value)
+        proposal = self.app.create_proposal("HINCRBY myhash field 5")
+        aggregate = self.app.execute_proposal(proposal)
 
         # Check existing field has been incremented.
-        self.assertIsInstance(hash_aggregate, HashAggregate)
-        self.assertEqual(hash_aggregate.get_field_value("field"), "7")
+        self.assertIsInstance(aggregate, KVAggregate)
+        self.assertEqual(aggregate.get_field_value("field"), "7")
 
         # Propose and execute command to decrement field.
-        self.app.save(hash_aggregate)
-        proposal = propose_command(self.app, "HINCRBY myhash field -3")
-        hash_aggregate = execute_proposal(self.app, proposal.value)
+        self.app.save(aggregate)
+        proposal = self.app.create_proposal("HINCRBY myhash field -3")
+        aggregate = self.app.execute_proposal(proposal)
 
         # Check existing field has been decremented.
-        self.assertIsInstance(hash_aggregate, HashAggregate)
-        self.assertEqual(hash_aggregate.get_field_value("field"), "4")
+        self.assertIsInstance(aggregate, KVAggregate)
+        self.assertEqual(aggregate.get_field_value("field"), "4")
 
         # Check we can't do it twice.
-        self.app.save(hash_aggregate)
+        self.app.save(aggregate)
         with self.assertRaises(AggregateVersionMismatch):
-            execute_proposal(self.app, proposal.value)
+            self.app.execute_proposal(proposal)
 
 
 class TestSplit(TestCase):

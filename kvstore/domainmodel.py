@@ -1,52 +1,8 @@
 from dataclasses import dataclass
-from typing import List, Optional
+from typing import Dict, List, Optional
 from uuid import NAMESPACE_URL, UUID, uuid5
 
 from eventsourcing.domain import Aggregate, event
-
-
-def create_kv_aggregate_id(key_name: str):
-    return uuid5(NAMESPACE_URL, f"/keys/{key_name}")
-
-
-def create_paxos_aggregate_id(aggregate_id: UUID, aggregate_version: Optional[int]):
-    return uuid5(NAMESPACE_URL, f"/proposals/{aggregate_id}/{aggregate_version}")
-
-
-class KVAggregate(Aggregate):
-    def __init__(self, key_name):
-        self.key_name = key_name
-
-    class Created(Aggregate.Created["KVAggregate"]):
-        key_name: str
-
-    @classmethod
-    def create(cls, id: UUID, key_name: str):
-        return cls._create(event_class=cls.Created, id=id, key_name=key_name)
-
-
-class HashAggregate(KVAggregate):
-    def __init__(self, key_name):
-        super().__init__(key_name)
-        self.hash = {}
-
-    @staticmethod
-    def create_id(key_name: str):
-        return create_kv_aggregate_id(key_name)
-
-    class Created(KVAggregate.Created):
-        pass
-
-    def get_field_value(self, field_name):
-        return self.hash.get(field_name, None)
-
-    @event("FieldValueSet")
-    def set_field_value(self, field_name, field_value):
-        self.hash[field_name] = field_value
-
-    @event("FieldValueDeleted")
-    def del_field_value(self, field_name):
-        del self.hash[field_name]
 
 
 @dataclass
@@ -57,7 +13,7 @@ class AppliesTo:
 
 @dataclass
 class KVProposal:
-    cmd: List[str]
+    cmd_text: str
     applies_to: AppliesTo
 
 
@@ -65,3 +21,51 @@ class KVProposal:
 class PaxosProposal:
     key: UUID
     value: KVProposal
+
+
+class TypeMismatchError(Exception):
+    pass
+
+
+class KVAggregate(Aggregate):
+
+    TYPE_HASH = "hash"
+
+    @classmethod
+    def create(cls, id: UUID, key_name: str):
+        return cls._create(event_class=cls.Created, id=id, key_name=key_name)
+
+    class Created(Aggregate.Created["KVAggregate"]):
+        key_name: str
+
+    def __init__(self, key_name):
+        self.key_name = key_name
+        self.type_name: Optional[str] = None
+        self.hash = {}
+
+    @staticmethod
+    def create_id(key_name: str) -> UUID:
+        return uuid5(NAMESPACE_URL, f"/keys/{key_name}")
+
+    def get_field_value(self, field_name):
+        return self.hash.get(field_name, None)
+
+    @event("FieldValueSet")
+    def set_field_value(self, field_name, field_value):
+        self.assert_hash()
+        self.hash[field_name] = field_value
+
+    @event("FieldValueDeleted")
+    def del_field_value(self, field_name):
+        self.assert_hash()
+        del self.hash[field_name]
+
+    def assert_hash(self):
+        self.assert_type(self.TYPE_HASH)
+
+    def assert_type(self, type_name):
+        if self.type_name is None:
+            self.type_name = type_name
+        elif self.type_name != type_name:
+            raise TypeMismatchError(f"Excepted {type_name} but is {self.type_name}")
+
