@@ -1,6 +1,13 @@
+from copy import deepcopy
 from threading import RLock
+from typing import Optional
+from uuid import UUID
 
-from eventsourcing.application import Repository
+from eventsourcing.application import (
+    ProjectorFunctionType,
+    Repository,
+    mutate_aggregate,
+)
 from eventsourcing.domain import TAggregate
 
 
@@ -9,19 +16,42 @@ class CachedRepository(Repository):
         super().__init__(*args, **kwargs)
         self.cache = Cache(maxsize=500)
 
-    def get(self, aggregate_id) -> TAggregate:
-        try:
-            return self.cache.get(aggregate_id)
-        except KeyError:
-            aggregate = super().get(aggregate_id)
-            self.cache.put(aggregate_id, aggregate)
-            return aggregate
+    def get(
+        self,
+        aggregate_id: UUID,
+        version: Optional[int] = None,
+        projector_func: ProjectorFunctionType[TAggregate] = mutate_aggregate,
+    ) -> TAggregate:
+        if version is None:
+            try:
+                # Look for aggregate in the cache.
+                aggregate = self.cache.get(aggregate_id)
+            except KeyError:
+                # Reconstruct aggregate from stored events.
+                aggregate = super().get(aggregate_id, projector_func=mutate_aggregate)
+                # Put aggregate in the cache.
+                self.cache.put(aggregate_id, aggregate)
+            else:
+                # Fast forward cached aggregate.
+                new_events = self.event_store.get(
+                    originator_id=aggregate_id, gt=aggregate.version
+                )
+                aggregate = mutate_aggregate(aggregate, new_events)
+            # Deep copy cached aggregate, so bad mutations don't corrupt cache.
+            aggregate = deepcopy(aggregate)
+        else:
+            # Reconstruct historical version of aggregate from stored events.
+            aggregate = super().get(
+                aggregate_id, version=version, projector_func=mutate_aggregate
+            )
+        return aggregate
 
 
 class Cache:
     """
     This is basically copied from functools.lru_cache. But
-    we need to have a put() method, so needed to write this.
+    we need to know when there was a cache hit so we can
+    fast-forward the aggregate with new stored events.
     """
 
     sentinel = object()  # unique object used to signal cache misses

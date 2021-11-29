@@ -21,7 +21,12 @@ class AppliesToAsList(Transcoding):
     type = AppliesTo
 
     def encode(self, obj: AppliesTo) -> List:
-        return [obj.aggregate_id, obj.aggregate_version]
+        return [
+            obj.aggregate_id,
+            obj.aggregate_version,
+            obj.index_id,
+            obj.index_version,
+        ]
 
     def decode(self, data: List) -> AppliesTo:
         return AppliesTo(*data)

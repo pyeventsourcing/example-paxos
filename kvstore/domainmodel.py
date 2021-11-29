@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from typing import Dict, List, Optional
+from typing import Optional
 from uuid import NAMESPACE_URL, UUID, uuid5
 
 from eventsourcing.domain import Aggregate, event
@@ -9,6 +9,8 @@ from eventsourcing.domain import Aggregate, event
 class AppliesTo:
     aggregate_id: UUID
     aggregate_version: Optional[int]
+    index_id: UUID
+    index_version: Optional[int]
 
 
 @dataclass
@@ -27,25 +29,36 @@ class TypeMismatchError(Exception):
     pass
 
 
-class KVAggregate(Aggregate):
-
-    TYPE_HASH = "hash"
-
-    @classmethod
-    def create(cls, id: UUID, key_name: str):
-        return cls._create(event_class=cls.Created, id=id, key_name=key_name)
-
-    class Created(Aggregate.Created["KVAggregate"]):
-        key_name: str
-
-    def __init__(self, key_name):
+class KVIndex(Aggregate):
+    def __init__(self, key_name: str, ref: Optional[UUID]):
         self.key_name = key_name
-        self.type_name: Optional[str] = None
-        self.hash = {}
+        self.ref = ref
 
     @staticmethod
     def create_id(key_name: str) -> UUID:
         return uuid5(NAMESPACE_URL, f"/keys/{key_name}")
+
+    @event("RefUpdated")
+    def update_ref(self, new_ref: Optional[UUID]):
+        self.ref = new_ref
+
+
+class KVAggregate(Aggregate):
+
+    TYPE_HASH = "hash"
+
+    def __init__(self, id: UUID, key_name: str):
+        self._id = id
+        self.key_name = key_name
+        self.type_name: Optional[str] = None
+        self.hash = {}
+
+    class Created(Aggregate.Created["KVAggregate"]):
+        key_name: str
+
+    @event("Renamed")
+    def rename(self, new_key_name: str):
+        self.key_name = new_key_name
 
     def get_field_value(self, field_name):
         return self.hash.get(field_name, None)
@@ -68,4 +81,3 @@ class KVAggregate(Aggregate):
             self.type_name = type_name
         elif self.type_name != type_name:
             raise TypeMismatchError(f"Excepted {type_name} but is {self.type_name}")
-

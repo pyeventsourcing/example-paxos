@@ -1,11 +1,13 @@
+from threading import RLock
 from typing import Any
 from uuid import UUID
 
-from eventsourcing.application import AggregateNotFound, ProcessEvent
+from eventsourcing.application import AggregateNotFound, ProcessEvent, Repository
 from eventsourcing.domain import Aggregate, AggregateEvent, TAggregate
 from eventsourcing.persistence import Transcoder
 from eventsourcing.system import ProcessApplication
 
+from paxos.cache import CachedRepository
 from paxos.composable import (
     PaxosMessage,
 )
@@ -49,6 +51,12 @@ class PaxosApplication(ProcessApplication[Aggregate]):
         transcoder.register(SetAsList())
         transcoder.register(ProposalStatusAsDict())
 
+    def construct_repository(self) -> Repository[TAggregate]:
+        return CachedRepository(
+            event_store=self.events,
+            snapshot_store=self.snapshots,
+        )
+
     def propose_value(
         self, key: UUID, value: Any, assume_leader: bool = False
     ) -> PaxosAggregate:
@@ -72,11 +80,14 @@ class PaxosApplication(ProcessApplication[Aggregate]):
         paxos_aggregate.receive_message(msg)
 
         self.save(paxos_aggregate)
+        self.repository.cache.put(paxos_aggregate.id, paxos_aggregate)
 
         return paxos_aggregate  # in case it's new
 
     def get_final_value(self, key: UUID) -> PaxosAggregate:
-        return self.repository.get(key).final_value
+        return self.repository.get(
+            key,
+        ).final_value
 
     def policy(
         self,
@@ -94,22 +105,19 @@ class PaxosApplication(ProcessApplication[Aggregate]):
     def process_message_announced(self, domain_event):
         # Get or create aggregate.
         try:
-            paxos = self.repository.get(domain_event.originator_id)
+            paxos_aggregate = self.repository.get(domain_event.originator_id)
         except AggregateNotFound:
-            paxos = PaxosAggregate.start(
+            paxos_aggregate = PaxosAggregate.start(
                 originator_id=domain_event.originator_id,
                 quorum_size=self.quorum_size,
                 network_uid=self.name,
             )
-            # # Needs to go in the cache now, otherwise we get
-            # # "Duplicate" errors (for some unknown reason).
-            # if self.repository.use_cache:
-            #     self.repository.put_entity_in_cache(paxos.id, paxos)
+            # self.repository.cache.put(paxos_aggregate.id, paxos_aggregate)
         # Absolutely make sure the participant aggregates aren't getting confused.
         assert (
-            paxos.network_uid == self.name
+            paxos_aggregate.network_uid == self.name
         ), "Wrong paxos aggregate: required network_uid {}, got {}".format(
-            self.name, paxos.network_uid
+            self.name, paxos_aggregate.network_uid
         )
         # Only receive messages until resolution is
         # obtained. Followers will process our previous
@@ -118,8 +126,8 @@ class PaxosApplication(ProcessApplication[Aggregate]):
         msg = domain_event.msg
         assert isinstance(msg, PaxosMessage)
         resolution_msg = None
-        if paxos.final_value is None:
-            resolution_msg = paxos.receive_message(msg)
+        if paxos_aggregate.final_value is None:
+            resolution_msg = paxos_aggregate.receive_message(msg)
         # if resolution_msg:
         #     print("Final value:", paxos.final_value)
-        return paxos, resolution_msg
+        return paxos_aggregate, resolution_msg

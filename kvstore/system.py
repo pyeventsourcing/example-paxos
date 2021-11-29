@@ -19,5 +19,19 @@ class KVSystem(System):
             for i in range(num_participants)
         ]
         assert num_participants > 1
+        # Each following and leading all.
         pipes = [[c[0], c[1], c[0]] for c in itertools.combinations(classes, 2)]
+
+        # Star formation.
+        # pipes = [
+        #     [classes[0], classes[1], classes[0]],
+        #     [classes[0], classes[2], classes[0]],
+        # ]
+
+        # Loop formation.
+        # pipes = [
+        #     [classes[0], classes[1]],
+        #     [classes[1], classes[2]],
+        #     [classes[2], classes[0]],
+        # ]
         super(KVSystem, self).__init__(pipes)
