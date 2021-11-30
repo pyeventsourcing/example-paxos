@@ -49,12 +49,15 @@ class PaxosApplication(ProcessApplication[Aggregate]):
             event_store=self.events,
             snapshot_store=self.snapshots,
             cache_size=self.cache_size,
+            fast_forward=False,
+            app_name=self.__class__.__name__,
         )
 
     def record(self, process_event: ProcessEvent) -> Optional[int]:
         returning = super().record(process_event)
         for aggregate_id, aggregate in process_event.aggregates.items():
-            self.repository.cache.put(aggregate_id, aggregate)
+            if self.repository.cache:
+                self.repository.cache.put(aggregate_id, aggregate)
         return returning
 
     def propose_value(

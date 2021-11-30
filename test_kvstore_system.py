@@ -1,10 +1,8 @@
-import os
-import random
 import sys
 from queue import Empty, Queue
 from threading import Thread
 from time import sleep, time
-from typing import Any, Type, cast
+from typing import Any, Dict, Type, cast
 from unittest import TestCase
 
 from eventsourcing.application import AggregateNotFound
@@ -19,25 +17,26 @@ from paxos.system import PaxosSystem
 from test_paxos_system import drop_postgres_table
 
 
-class TestKVSystem(TestCase):
+class KVSystemTestCase(TestCase):
     persistence_module: str = "eventsourcing.popo"
     runner_class: Type[Runner] = SingleThreadedRunner
+    num_participants = 3
 
     def setUp(self):
-        # Use the same system object in all tests.
-
-        os.environ["PERSISTENCE_MODULE"] = self.persistence_module
-        # os.environ['COMPRESSOR_TOPIC'] = 'zlib'
-        self.num_participants = 3
         self.system = PaxosSystem(KVStore, self.num_participants)
-        self.runner = self.runner_class(self.system)
+        self.runner = self.create_runner({
+            "PERSISTENCE_MODULE": self.persistence_module
+            # "COMPRESSOR_TOPIC": "zlib"
+        })
         self.runner.start()
+
+    def create_runner(self, env: Dict):
+        return self.runner_class(system=self.system, env=env)
 
     def tearDown(self):
         self.runner.stop()
-        del os.environ["PERSISTENCE_MODULE"]
 
-    def get_paxos_app(self, name) -> KVStore:
+    def get_app(self, name) -> KVStore:
         return cast(KVStore, self.runner.apps.get(name))
 
     @retry(
@@ -57,101 +56,85 @@ class TestKVSystem(TestCase):
             return False
 
 
-class TestWithSQLite(TestKVSystem):
+class TestWithSQLite(KVSystemTestCase):
     persistence_module = "eventsourcing.sqlite"
 
     def setUp(self):
         self.temp_files = tmpfile_uris()
-
-        os.environ["KVSTORE0_SQLITE_DBNAME"] = next(self.temp_files)
-        os.environ["KVSTORE1_SQLITE_DBNAME"] = next(self.temp_files)
-        os.environ["KVSTORE2_SQLITE_DBNAME"] = next(self.temp_files)
-
-        # os.environ[
-        #     "KVSTORE0_SQLITE_DBNAME"
-        # ] = "file:application0?mode=memory&cache=shared"
-        # os.environ[
-        #     "KVSTORE1_SQLITE_DBNAME"
-        # ] = "file:application1?mode=memory&cache=shared"
-        # os.environ[
-        #     "KVSTORE2_SQLITE_DBNAME"
-        # ] = "file:application2?mode=memory&cache=shared"
         super().setUp()
 
+    def create_runner(self, env: Dict):
+        for i in range(self.num_participants):
+            env[f"KVSTORE{i}_SQLITE_DBNAME"] = next(self.temp_files)
+            # env[f"KVSTORE{i}_SQLITE_DBNAME"] = f"file:application{i}?mode=memory&cache=shared"
+        return super().create_runner(env)
 
-class TestWithPostgreSQL(TestKVSystem):
+
+class TestWithPostgreSQL(KVSystemTestCase):
     persistence_module = "eventsourcing.postgres"
 
+    def create_runner(self, env: Dict):
+        env["POSTGRES_DBNAME"] = "eventsourcing"
+        env["POSTGRES_HOST"] = "127.0.0.1"
+        env["POSTGRES_PORT"] = "5432"
+        env["POSTGRES_USER"] = "eventsourcing"
+        env["POSTGRES_PASSWORD"] = "eventsourcing"
+        return super().create_runner(env)
+
     def setUp(self):
-        os.environ["POSTGRES_DBNAME"] = "eventsourcing"
-        os.environ["POSTGRES_HOST"] = "127.0.0.1"
-        os.environ["POSTGRES_PORT"] = "5432"
-        os.environ["POSTGRES_USER"] = "eventsourcing"
-        os.environ["POSTGRES_PASSWORD"] = "eventsourcing"
-
-        db = PostgresDatastore(
-            os.getenv("POSTGRES_DBNAME"),
-            os.getenv("POSTGRES_HOST"),
-            os.getenv("POSTGRES_PORT"),
-            os.getenv("POSTGRES_USER"),
-            os.getenv("POSTGRES_PASSWORD"),
+        datastore = PostgresDatastore(
+            "eventsourcing",
+            "127.0.0.1",
+            "5432",
+            "eventsourcing",
+            "eventsourcing",
         )
-        drop_postgres_table(db, "kvstore0_events")
-        drop_postgres_table(db, "kvstore0_snapshots")
-        drop_postgres_table(db, "kvstore0_tracking")
-        drop_postgres_table(db, "kvstore1_events")
-        drop_postgres_table(db, "kvstore1_snapshots")
-        drop_postgres_table(db, "kvstore1_tracking")
-        drop_postgres_table(db, "kvstore2_events")
-        drop_postgres_table(db, "kvstore2_snapshots")
-        drop_postgres_table(db, "kvstore2_tracking")
-
+        for i in range(self.num_participants):
+            drop_postgres_table(datastore, f"kvstore{i}_events")
+            drop_postgres_table(datastore, f"kvstore{i}_snapshots")
+            drop_postgres_table(datastore, f"kvstore{i}_tracking")
         super().setUp()
 
 
-class TestSystemSingleThreaded(TestKVSystem):
+class TestSystemSingleThreaded(KVSystemTestCase):
     def test_propose_command_execute_query(self):
 
-        app0 = self.get_paxos_app("KVStore0")
-        app1 = self.get_paxos_app("KVStore1")
-        app2 = self.get_paxos_app("KVStore2")
+        apps = [self.get_app(f"KVStore{i}") for i in range(self.num_participants)]
+        app0 = apps[0]
 
         # Check each process has expected initial value.
-        self.assert_query(app0, "HGET myhash field", None)
-        self.assert_query(app1, "HGET myhash field", None)
-        self.assert_query(app2, "HGET myhash field", None)
-
-        assert isinstance(app0, KVStore)
+        for app in apps:
+            self.assert_query(app, "HGET myhash field", None)
 
         # Set a value.
         f = app0.propose_command('HSET myhash field "Hello"', assume_leader=True)
         f.result()
 
         # Check each process has expected final value.
-        self.assert_query(app0, "HGET myhash field", "Hello")
-        self.assert_query(app1, "HGET myhash field", "Hello")
-        self.assert_query(app2, "HGET myhash field", "Hello")
+        for app in apps:
+            self.assert_query(app, "HGET myhash field", "Hello")
 
         # Update the value.
         f = app0.propose_command('HSET myhash field "Helloooo"', assume_leader=True)
         f.result()
 
         # Check each process has expected final value.
-        self.assert_query(app0, "HGET myhash field", "Helloooo")
-        self.assert_query(app1, "HGET myhash field", "Helloooo")
-        self.assert_query(app2, "HGET myhash field", "Helloooo")
+        for app in apps:
+            self.assert_query(app, "HGET myhash field", "Helloooo")
 
         # Delete the value.
         f = app0.propose_command("HDEL myhash field", assume_leader=True)
         f.result()
 
-        self.assert_query(app0, "HGET myhash field", None)
-        self.assert_query(app1, "HGET myhash field", None)
-        self.assert_query(app2, "HGET myhash field", None)
+        for app in apps:
+            self.assert_query(app, "HGET myhash field", None)
 
         # Set a value in a different hash.
-        f = app0.propose_command('HSET myhash2 field "Hello"', assume_leader=True)
+        f = app0.propose_command('HSET myhash2 field "Goodbye"', assume_leader=True)
         f.result()
+
+        for app in apps:
+            self.assert_query(app, "HGET myhash2 field", "Goodbye")
 
 
 class TestSystemSingleThreadedWithSQLite(TestWithSQLite, TestSystemSingleThreaded):
@@ -178,12 +161,12 @@ class TestSystemMultiThreadedWithPostgreSQL(
     pass
 
 
-class TestPerformanceSingleThreaded(TestKVSystem):
+class TestPerformanceSingleThreaded(KVSystemTestCase):
     period = 100
 
     def test_performance(self):
         print(type(self))
-        apps = [self.get_paxos_app(f"KVStore{i}") for i in range(self.num_participants)]
+        apps = [self.get_app(f"KVStore{i}") for i in range(self.num_participants)]
 
         period = self.period
         n = period * 10
@@ -200,16 +183,18 @@ class TestPerformanceSingleThreaded(TestKVSystem):
             app = apps[0]
             now = time()
             started_times.append(now)
+            cmd_text = f'HSET myhash{i} field "Hello{i}"'
             app.propose_command(
-                f'HSET myhash{i} field "Hello{i}"',
+                cmd_text=cmd_text,
                 assume_leader=True,
                 results_queue=results_queue,
             )
 
             future = results_queue.get(timeout=0.5)
 
+            future.result()
             i_started: float = future.started
-            i_finished: float = future.result()
+            i_finished: float = future.finished
             timings.append((i_started, i_finished))
             finished_times.append(i_finished)
             i_latency = i_finished - i_started
@@ -268,22 +253,22 @@ class TestPerformanceSingleThreaded(TestKVSystem):
 class TestPerformanceSingleThreadedWithSQLite(
     TestWithSQLite, TestPerformanceSingleThreaded
 ):
-    period = 50
+    period = 100
 
 
 class TestPerformanceSingleThreadedWithPostgreSQL(
     TestWithPostgreSQL, TestPerformanceSingleThreaded
 ):
-    period = 15
+    period = 50
 
 
-class TestPerformanceMultiThreaded(TestKVSystem):
+class TestPerformanceMultiThreaded(KVSystemTestCase):
     runner_class = MultiThreadedRunner
-    target_rate = 50
+    target_rate = 150
 
     def test_performance(self):
         print(type(self))
-        apps = [self.get_paxos_app(f"KVStore{i}") for i in range(self.num_participants)]
+        apps = [self.get_app(f"KVStore{i}") for i in range(self.num_participants)]
 
         period = self.target_rate
         interval = 1 / period
@@ -329,7 +314,8 @@ class TestPerformanceMultiThreaded(TestKVSystem):
                         is_queue_empty = False
 
                         i_started: float = future.started
-                        i_finished: float = future.result()
+                        future.result()
+                        i_finished: float = future.finished
                         timings.append((i_started, i_finished))
                         finished_times.append(i_finished)
                         i_latency = i_finished - i_started
@@ -399,13 +385,13 @@ class TestPerformanceMultiThreaded(TestKVSystem):
 class TestPerformanceMultiThreadedWithSQLite(
     TestWithSQLite, TestPerformanceMultiThreaded
 ):
-    target_rate = 50
+    target_rate = 100
 
 
 class TestPerformanceMultiThreadedWithPostgreSQL(
     TestWithPostgreSQL, TestPerformanceMultiThreaded
 ):
-    target_rate = 35
+    target_rate = 70
 
 
-del TestKVSystem
+del KVSystemTestCase

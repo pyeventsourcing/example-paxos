@@ -33,6 +33,7 @@ class KVStore(PaxosApplication):
     ]
     pull_section_size = 100
     log_section_size = 100
+    cache_size = 1000
 
     def __init__(self, env: Optional[Mapping[str, str]] = None) -> None:
         super().__init__(env)

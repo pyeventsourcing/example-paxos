@@ -18,17 +18,18 @@ class CachedRepository(Repository[TAggregate]):
         event_store: EventStore[AggregateEvent[TAggregate]],
         snapshot_store: Optional[EventStore[Snapshot[TAggregate]]] = None,
         cache_size: Optional[int] = None,
+        fast_forward: bool = True,
     ):
         super().__init__(event_store, snapshot_store)
         if cache_size is None:
             self.cache: Optional[Cache] = None
-        if isinstance(cache_size, int):
-            if cache_size > 1:
-                self.cache = LRUCache(maxsize=cache_size)
-            else:
-                self.cache = Cache()
-        else:
+        if cache_size is None:
             self.cache = None
+        elif cache_size <= 0:
+            self.cache = Cache()
+        else:
+            self.cache = LRUCache(maxsize=cache_size)
+        self.fast_forward = fast_forward
 
     def get(
         self,
@@ -46,11 +47,12 @@ class CachedRepository(Repository[TAggregate]):
                 # Put aggregate in the cache.
                 self.cache.put(aggregate_id, aggregate)
             else:
-                # Fast forward cached aggregate.
-                new_events = self.event_store.get(
-                    originator_id=aggregate_id, gt=aggregate.version
-                )
-                aggregate = mutate_aggregate(aggregate, new_events)
+                if self.fast_forward:
+                    # Fast forward cached aggregate.
+                    new_events = self.event_store.get(
+                        originator_id=aggregate_id, gt=aggregate.version
+                    )
+                    aggregate = mutate_aggregate(aggregate, new_events)
             # Deep copy cached aggregate, so bad mutations don't corrupt cache.
             aggregate = deepcopy(aggregate)
         else:
@@ -69,14 +71,17 @@ class Cache(Generic[T]):
         self.cache: Dict[Any, T] = {}
 
     def get(self, key: Any) -> T:
-        return self.cache.get(key)
+        return self.cache[key]
 
     def put(self, key: Any, value: T) -> None:
-        self.cache[key] = value
+        if value is not None:
+            self.cache[key] = value
 
 
 class LRUCache(Cache[T]):
     """
+    Size limited caching that tracks accesses by recency.
+
     This is basically copied from functools.lru_cache. But
     we need to know when there was a cache hit so we can
     fast-forward the aggregate with new stored events.
@@ -103,11 +108,10 @@ class LRUCache(Cache[T]):
         ]  # initialize by pointing to self
 
     def get(self, key: Any) -> T:
-        # Size limited caching that tracks accesses by recency
         with self.lock:
             link = self.cache.get(key)
             if link is not None:
-                # Move the link to the front of the circular queue
+                # Move the link to the front of the circular queue.
                 link_prev, link_next, _key, result = link
                 link_prev[LRUCache.NEXT] = link_next
                 link_next[LRUCache.PREV] = link_prev
@@ -121,12 +125,18 @@ class LRUCache(Cache[T]):
 
     def put(self, key: Any, value: T) -> None:
         with self.lock:
-            if key in self.cache:
-                # Getting here means that this same key was added to the
-                # cache while the lock was released.  Since the link
-                # update is already done, we need only return the
-                # computed result and update the count of misses.
-                pass
+            link = self.cache.get(key)
+            if link is not None:
+                # Set value.
+                link[LRUCache.RESULT] = value
+                # Move the link to the front of the circular queue.
+                link_prev, link_next, _key, result = link
+                link_prev[LRUCache.NEXT] = link_next
+                link_next[LRUCache.PREV] = link_prev
+                last = self.root[LRUCache.PREV]
+                last[LRUCache.NEXT] = self.root[LRUCache.PREV] = link
+                link[LRUCache.PREV] = last
+                link[LRUCache.NEXT] = self.root
             elif self.full:
                 # Use the old root to store the new key and result.
                 oldroot = self.root
@@ -153,6 +163,6 @@ class LRUCache(Cache[T]):
                 last = self.root[LRUCache.PREV]
                 link = [last, self.root, key, value]
                 last[LRUCache.NEXT] = self.root[LRUCache.PREV] = self.cache[key] = link
-                # Use the cache_len bound method instead of the len() function
+                # Use the __len__() bound method instead of the len() function
                 # which could potentially be wrapped in an lru_cache itself.
                 self.full = self.cache.__len__() >= self.maxsize
