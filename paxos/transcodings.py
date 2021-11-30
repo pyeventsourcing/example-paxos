@@ -1,4 +1,4 @@
-from typing import Any, Dict
+from typing import Dict, List, Set
 
 from eventsourcing.persistence import Transcoding
 
@@ -61,7 +61,7 @@ class ProposalStatusAsDict(Transcoding):
     name = "proposal_status"
     type = ProposalStatus
 
-    def encode(self, obj: Any) -> Any:
+    def encode(self, obj: ProposalStatus) -> Dict:
         return {
             "accept_count": obj.accept_count,
             "retain_count": obj.retain_count,
@@ -69,7 +69,7 @@ class ProposalStatusAsDict(Transcoding):
             "value": obj.value,
         }
 
-    def decode(self, data: Any) -> Any:
+    def decode(self, data: Dict) -> ProposalStatus:
         obj = ProposalStatus(data["value"])
         obj.accept_count = data["accept_count"]
         obj.retain_count = data["retain_count"]
@@ -81,8 +81,8 @@ class SetAsList(Transcoding):
     name = "set"
     type = set
 
-    def encode(self, obj: Any) -> Any:
+    def encode(self, obj: Set) -> List:
         return list(obj)
 
-    def decode(self, data: Any) -> Any:
+    def decode(self, data: List) -> Set:
         return set(data)
