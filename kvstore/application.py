@@ -2,12 +2,12 @@ import shlex
 from concurrent.futures import Future
 from queue import Queue
 from time import time
-from typing import Dict, List, Optional, Tuple, cast
+from typing import Dict, Generic, Iterator, List, Mapping, Optional, Tuple, Type, cast
 from uuid import NAMESPACE_URL, UUID, uuid5
 
 from eventsourcing.application import AggregateNotFound, ProcessEvent
-from eventsourcing.domain import Aggregate, AggregateEvent, TAggregate
-from eventsourcing.persistence import IntegrityError, Transcoder
+from eventsourcing.domain import Aggregate, AggregateEvent, TAggregate, TDomainEvent
+from eventsourcing.persistence import EventStore, IntegrityError, Transcoder
 from eventsourcing.utils import get_topic, resolve_topic
 
 from kvstore.domainmodel import (
@@ -34,14 +34,24 @@ class KVStore(PaxosApplication):
     pull_section_size = 100
     log_section_size = 100
 
-    def __init__(self):
-        super(KVStore, self).__init__()
+    def __init__(self, env: Optional[Mapping[str, str]] = None) -> None:
+        super().__init__(env)
         self.futures: Dict[UUID, Future] = {}
+        self.paxos_log: Log[PaxosLogged] = Log(
+            self.events, uuid5(NAMESPACE_URL, "/paxoslog"), PaxosLogged
+        )
+        self.next_paxos_round: Optional[int] = None
 
     def register_transcodings(self, transcoder: Transcoder) -> None:
         super().register_transcodings(transcoder)
         transcoder.register(KVProposalAsList())
         transcoder.register(AppliesToAsList())
+
+    def record(self, process_event: ProcessEvent) -> Optional[int]:
+        returning = super(KVStore, self).record(process_event)
+        for aggregate_id, aggregate in process_event.aggregates.items():
+            self.repository.cache.put(aggregate_id, aggregate)
+        return returning
 
     def propose_command(
         self,
@@ -50,22 +60,35 @@ class KVStore(PaxosApplication):
         results_queue: "Optional[Queue[CommandFuture]]" = None,
     ) -> Future:
         kv_proposal = self.create_proposal(cmd_text)
-        proposal_key = self.create_paxos_aggregate_id(kv_proposal.applies_to)
+        # proposal_key = self.create_paxos_aggregate_id_from_applies_to(kv_proposal.applies_to)
+        # paxos_logged = None
+        paxos_logged = self.paxos_log.trigger_event(self.next_paxos_round)
+        proposal_key = self.create_paxos_aggregate_id_from_round(paxos_logged.originator_version)
         paxos_proposal = PaxosProposal(proposal_key, kv_proposal)
         future = CommandFuture(results_queue=results_queue)
         self.futures[paxos_proposal.key] = future
+        paxos_aggregate = self.start_paxos(paxos_proposal.key, paxos_proposal.value, assume_leader)
+
         try:
-            self.propose_value(paxos_proposal.key, paxos_proposal.value, assume_leader)
+            self.save(paxos_aggregate, paxos_logged)
         except IntegrityError as e:
+            self.next_paxos_round = None
             raise CommandRejected from e
         else:
+            self.next_paxos_round = paxos_logged.originator_version + 1
             return future
 
     @staticmethod
-    def create_paxos_aggregate_id(applies_to: AppliesTo) -> UUID:
+    def create_paxos_aggregate_id_from_applies_to(applies_to: AppliesTo) -> UUID:
         return uuid5(
             NAMESPACE_URL,
             f"/proposals/{applies_to.aggregate_id}/{applies_to.aggregate_version}",
+        )
+
+    def create_paxos_aggregate_id_from_round(self, round: int) -> UUID:
+        return uuid5(
+            NAMESPACE_URL,
+            f"/proposals/{round}",
         )
 
     def create_proposal(self, cmd_text: str) -> KVProposal:
@@ -254,3 +277,60 @@ class CommandFuture(Future):
         self.started = time()
         if results_queue:
             self.add_done_callback(lambda future: results_queue.put(future))
+
+
+class Log(Generic[TDomainEvent]):
+    def __init__(
+        self,
+        events: EventStore[AggregateEvent[Aggregate]],
+        originator_id: UUID,
+        logged_cls: Type[TDomainEvent],
+    ):
+        self.events = events
+        self.originator_id = originator_id
+        self.logged_cls = logged_cls
+
+    def trigger_event(self, next_originator_version: Optional[int]) -> TDomainEvent:
+        if next_originator_version is None:
+            last_logged = self._get_last_logged()
+            if last_logged:
+                next_originator_version = last_logged.originator_version + 1
+            else:
+                next_originator_version = Aggregate.INITIAL_VERSION
+        return self.logged_cls(  # type: ignore
+            originator_id=self.originator_id,
+            originator_version=next_originator_version,
+            timestamp=self.logged_cls.create_timestamp(),
+        )
+
+    def get(self, limit: int = 10, offset: int = 0) -> Iterator[TDomainEvent]:
+        # Calculate lte.
+        lte = None
+        if offset > 0:
+            last = self._get_last_logged()
+            if last:
+                lte = last.originator_version - offset
+
+        # Get logged events.
+        return cast(
+            Iterator[TDomainEvent],
+            self.events.get(
+                originator_id=self.originator_id,
+                lte=lte,
+                desc=True,
+                limit=limit,
+            ),
+        )
+
+    def _get_last_logged(
+        self,
+    ) -> Optional[TDomainEvent]:
+        events = self.events.get(originator_id=self.originator_id, desc=True, limit=1)
+        try:
+            return cast(TDomainEvent, next(events))
+        except StopIteration:
+            return None
+
+
+class PaxosLogged(AggregateEvent[Aggregate]):
+    pass

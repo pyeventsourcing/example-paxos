@@ -298,9 +298,9 @@ class TestPerformanceMultiThreaded(TestKVSystem):
         def write():
             started = time()
             for i in list(range(n + 1)):
-                app = apps[i % self.num_participants]
-                app = random.choice(apps)
-                # app = apps[0]
+                # app = apps[i % self.num_participants]
+                # app = random.choice(apps)
+                app = apps[0]
                 now = time()
                 started_times.append(now)
                 app.propose_command(
@@ -391,14 +391,6 @@ class TestPerformanceMultiThreaded(TestKVSystem):
             if previous_finished_time > finished_time:
                 print("Finished earlier:", i, started_time, finished_time)
             previous_finished_time = finished_time
-
-        sleep(5)
-        for app in apps:
-            print(
-                "Max notification ID:",
-                app.__class__.__name__,
-                app.recorder.max_notification_id(),
-            )
 
         sys.stdout.flush()
         sleep(0.1)

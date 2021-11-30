@@ -130,7 +130,6 @@ class RENAMECommand(KVCommand):
             new_index = app.get_kv_index(self.new_field_name)
             if new_index is None:
                 new_index = KVIndex(self.new_field_name, aggregate.id)
-                # app.repository.cache.put(new_index.id, new_index)
             new_index.update_ref(aggregate.id)
             aggregate.rename(self.new_field_name)
             return aggregate, old_index, new_index

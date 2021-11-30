@@ -27,13 +27,6 @@ from paxos.transcodings import (
 
 class PaxosApplication(ProcessApplication[Aggregate]):
     quorum_size: int = 0
-    notification_log_section_size = 5
-    use_cache = True
-    set_notification_ids = True
-
-    snapshotting_intervals = {
-        # PaxosAggregate: 3
-    }
 
     @property
     def name(self):
@@ -62,15 +55,14 @@ class PaxosApplication(ProcessApplication[Aggregate]):
     ) -> PaxosAggregate:
         """
         Starts new Paxos aggregate and proposes a value for a key.
-
-        Decorated with retry in case of notification log conflict
-        or operational error.
-
-        This a good example of writing process event from an
-        application command. Just get the batch of pending events
-        and record a process event with those events alone. They
-        will be written atomically.
         """
+        paxos_aggregate = self.start_paxos(key, value, assume_leader)
+        self.save(paxos_aggregate)
+        self.repository.cache.put(paxos_aggregate.id, paxos_aggregate)
+
+        return paxos_aggregate  # in case it's new
+
+    def start_paxos(self, key, value, assume_leader):
         assert self.quorum_size > 0
         assert isinstance(key, UUID)
         paxos_aggregate = PaxosAggregate.start(
@@ -78,11 +70,7 @@ class PaxosApplication(ProcessApplication[Aggregate]):
         )
         msg = paxos_aggregate.propose_value(value, assume_leader=assume_leader)
         paxos_aggregate.receive_message(msg)
-
-        self.save(paxos_aggregate)
-        self.repository.cache.put(paxos_aggregate.id, paxos_aggregate)
-
-        return paxos_aggregate  # in case it's new
+        return paxos_aggregate
 
     def get_final_value(self, key: UUID) -> PaxosAggregate:
         return self.repository.get(
