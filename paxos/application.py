@@ -1,5 +1,4 @@
-from threading import RLock
-from typing import Any
+from typing import Any, Optional
 from uuid import UUID
 
 from eventsourcing.application import AggregateNotFound, ProcessEvent, Repository
@@ -27,6 +26,7 @@ from paxos.transcodings import (
 
 class PaxosApplication(ProcessApplication[Aggregate]):
     quorum_size: int = 0
+    cache_size = 500
 
     @property
     def name(self):
@@ -44,11 +44,18 @@ class PaxosApplication(ProcessApplication[Aggregate]):
         transcoder.register(SetAsList())
         transcoder.register(ProposalStatusAsDict())
 
-    def construct_repository(self) -> Repository[TAggregate]:
+    def construct_repository(self) -> CachedRepository[TAggregate]:
         return CachedRepository(
             event_store=self.events,
             snapshot_store=self.snapshots,
+            cache_size=self.cache_size,
         )
+
+    def record(self, process_event: ProcessEvent) -> Optional[int]:
+        returning = super().record(process_event)
+        for aggregate_id, aggregate in process_event.aggregates.items():
+            self.repository.cache.put(aggregate_id, aggregate)
+        return returning
 
     def propose_value(
         self, key: UUID, value: Any, assume_leader: bool = False
@@ -58,8 +65,6 @@ class PaxosApplication(ProcessApplication[Aggregate]):
         """
         paxos_aggregate = self.start_paxos(key, value, assume_leader)
         self.save(paxos_aggregate)
-        self.repository.cache.put(paxos_aggregate.id, paxos_aggregate)
-
         return paxos_aggregate  # in case it's new
 
     def start_paxos(self, key, value, assume_leader):
@@ -100,7 +105,6 @@ class PaxosApplication(ProcessApplication[Aggregate]):
                 quorum_size=self.quorum_size,
                 network_uid=self.name,
             )
-            # self.repository.cache.put(paxos_aggregate.id, paxos_aggregate)
         # Absolutely make sure the participant aggregates aren't getting confused.
         assert (
             paxos_aggregate.network_uid == self.name

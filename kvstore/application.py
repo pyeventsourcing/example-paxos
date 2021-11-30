@@ -36,7 +36,7 @@ class KVStore(PaxosApplication):
 
     def __init__(self, env: Optional[Mapping[str, str]] = None) -> None:
         super().__init__(env)
-        self.futures: Dict[UUID, Future] = {}
+        self.futures: Dict[UUID, CommandFuture] = {}
         self.paxos_log: Log[PaxosLogged] = Log(
             self.events, uuid5(NAMESPACE_URL, "/paxoslog"), PaxosLogged
         )
@@ -46,12 +46,6 @@ class KVStore(PaxosApplication):
         super().register_transcodings(transcoder)
         transcoder.register(KVProposalAsList())
         transcoder.register(AppliesToAsList())
-
-    def record(self, process_event: ProcessEvent) -> Optional[int]:
-        returning = super(KVStore, self).record(process_event)
-        for aggregate_id, aggregate in process_event.aggregates.items():
-            self.repository.cache.put(aggregate_id, aggregate)
-        return returning
 
     def propose_command(
         self,
@@ -65,7 +59,7 @@ class KVStore(PaxosApplication):
         paxos_logged = self.paxos_log.trigger_event(self.next_paxos_round)
         proposal_key = self.create_paxos_aggregate_id_from_round(paxos_logged.originator_version)
         paxos_proposal = PaxosProposal(proposal_key, kv_proposal)
-        future = CommandFuture(results_queue=results_queue)
+        future = CommandFuture(cmd_text=cmd_text, results_queue=results_queue)
         self.futures[paxos_proposal.key] = future
         paxos_aggregate = self.start_paxos(paxos_proposal.key, paxos_proposal.value, assume_leader)
 
@@ -204,10 +198,18 @@ class KVStore(PaxosApplication):
                 if index2:
                     process_event.save(index2)
                 try:
-                    self.futures[paxos_aggregate.id].set_result(time())
+                    future = self.futures[paxos_aggregate.id]
                 except KeyError:
                     # Might not be the application which proposed the command.
                     pass
+                else:
+
+                    future.finished = time()
+                    # Todo: Check original_cmd_text equals final value, otherwise raise an error.
+                    # Todo: Capture that, and any other actual command execution errors, and call set_exception().
+                    # Todo: Get actual command execution results and call set_result().
+                    future.set_result("DONE")
+
 
     def execute_proposal(
         self, kv_proposal: KVProposal
@@ -272,9 +274,11 @@ class KVCommand:
 
 
 class CommandFuture(Future):
-    def __init__(self, results_queue: "Optional[Queue[CommandFuture]]"):
+    def __init__(self, cmd_text: str, results_queue: "Optional[Queue[CommandFuture]]"):
         super(CommandFuture, self).__init__()
-        self.started = time()
+        self.original_cmd_text = cmd_text
+        self.started: float = time()
+        self.finished: Optional[float] = None
         if results_queue:
             self.add_done_callback(lambda future: results_queue.put(future))
 
