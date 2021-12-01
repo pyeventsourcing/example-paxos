@@ -50,7 +50,6 @@ class PaxosApplication(ProcessApplication[Aggregate]):
             snapshot_store=self.snapshots,
             cache_size=self.cache_size,
             fast_forward=False,
-            app_name=self.__class__.__name__,
         )
 
     def record(self, process_event: ProcessEvent) -> Optional[int]:

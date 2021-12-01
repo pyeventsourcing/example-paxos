@@ -253,18 +253,18 @@ class TestPerformanceSingleThreaded(KVSystemTestCase):
 class TestPerformanceSingleThreadedWithSQLite(
     TestWithSQLite, TestPerformanceSingleThreaded
 ):
-    period = 100
+    period = 40
 
 
 class TestPerformanceSingleThreadedWithPostgreSQL(
     TestWithPostgreSQL, TestPerformanceSingleThreaded
 ):
-    period = 50
+    period = 25
 
 
 class TestPerformanceMultiThreaded(KVSystemTestCase):
     runner_class = MultiThreadedRunner
-    target_rate = 150
+    target_rate = 100
 
     def test_performance(self):
         print(type(self))
@@ -385,13 +385,13 @@ class TestPerformanceMultiThreaded(KVSystemTestCase):
 class TestPerformanceMultiThreadedWithSQLite(
     TestWithSQLite, TestPerformanceMultiThreaded
 ):
-    target_rate = 100
+    target_rate = 40
 
 
 class TestPerformanceMultiThreadedWithPostgreSQL(
     TestWithPostgreSQL, TestPerformanceMultiThreaded
 ):
-    target_rate = 70
+    target_rate = 25
 
 
 del KVSystemTestCase

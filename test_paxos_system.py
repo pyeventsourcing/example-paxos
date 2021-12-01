@@ -69,7 +69,7 @@ class TestPaxosSystem(unittest.TestCase):
     def tearDown(self):
         self.runner.stop()
 
-    def test(self):
+    def test_propose_value(self):
 
         key1, key2, key3 = uuid4(), uuid4(), uuid4()
         value1, value2, value3 = 11111, 22222, 33333

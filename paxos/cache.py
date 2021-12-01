@@ -23,8 +23,6 @@ class CachedRepository(Repository[TAggregate]):
         super().__init__(event_store, snapshot_store)
         if cache_size is None:
             self.cache: Optional[Cache] = None
-        if cache_size is None:
-            self.cache = None
         elif cache_size <= 0:
             self.cache = Cache()
         else:
