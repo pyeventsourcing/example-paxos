@@ -3,10 +3,10 @@ from uuid import NAMESPACE_URL, UUID, uuid5
 
 from eventsourcing.domain import Aggregate, event
 
-from kvstore.exceptions import TypeMismatchError
+from keyvaluestore.exceptions import TypeMismatchError
 
 
-class KVAggregate(Aggregate):
+class KeyValueAggregate(Aggregate):
 
     TYPE_HASH = "hash"
 
@@ -46,7 +46,7 @@ class KVAggregate(Aggregate):
             raise TypeMismatchError(f"Excepted {type_name} but is {self.type_name}")
 
 
-class KVIndex(Aggregate):
+class KeyIndex(Aggregate):
     def __init__(self, key_name: str, ref: Optional[UUID]):
         self.key_name = key_name
         self.ref = ref

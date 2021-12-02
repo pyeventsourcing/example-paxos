@@ -3,13 +3,13 @@ from __future__ import annotations
 from unittest import TestCase
 from uuid import uuid4
 
-from kvstore.domainmodel import KVAggregate
+from keyvaluestore.domainmodel import KeyValueAggregate
 
 
 class TestKVAggregates(TestCase):
     def test_hash_methods(self):
         originator_id = uuid4()
-        a = KVAggregate(id=originator_id, key_name="myhash")
+        a = KeyValueAggregate(id=originator_id, key_name="myhash")
         self.assertEqual(a.id, originator_id)
         self.assertEqual(a.key_name, "myhash")
         self.assertEqual(a.get_field_value("field"), None)

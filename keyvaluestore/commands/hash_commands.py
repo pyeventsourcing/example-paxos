@@ -1,18 +1,17 @@
 from decimal import Decimal
-from typing import Any, Optional, Tuple
+from typing import Any, Tuple
 
 from eventsourcing.application import AggregateNotFound
 from eventsourcing.domain import Aggregate
 
 from replicatedstatemachine.application import StateMachineReplica
-from kvstore.commands import KVCommand
-from kvstore.domainmodel import (
-    KVAggregate,
-    KVIndex,
+from keyvaluestore.commands import KeyValueStoreCommand
+from keyvaluestore.domainmodel import (
+    KeyIndex,
 )
 
 
-class HashCommand(KVCommand):
+class HashCommand(KeyValueStoreCommand):
     pass
 
 
@@ -89,7 +88,7 @@ class HGETCommand(HashCommand):
         return self.cmd[2]
 
     def do_query(self, app: StateMachineReplica) -> Any:
-        index_id = KVIndex.create_id(self.key_name)
+        index_id = KeyIndex.create_id(self.key_name)
         try:
             index = app.repository.get(
                 index_id,
@@ -103,25 +102,3 @@ class HGETCommand(HashCommand):
                 return aggregate.get_field_value(self.field_name)
         else:
             return None
-
-
-class RENAMECommand(KVCommand):
-    @property
-    def old_field_name(self) -> str:
-        return self.cmd[1]
-
-    @property
-    def new_field_name(self) -> str:
-        return self.cmd[2]
-
-    def execute(self, app: StateMachineReplica) -> Tuple[Aggregate, ...]:
-        kv_aggregate, index = self.resolve_key_name(app, self.key_name)
-        if kv_aggregate is not None:
-            old_index = self.get_kv_index(app, self.old_field_name)
-            old_index.update_ref(None)
-            new_index = self.get_kv_index(app, self.new_field_name)
-            if new_index is None:
-                new_index = KVIndex(self.new_field_name, kv_aggregate.id)
-            new_index.update_ref(kv_aggregate.id)
-            kv_aggregate.rename(self.new_field_name)
-            return kv_aggregate, old_index, new_index

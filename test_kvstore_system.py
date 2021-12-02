@@ -12,22 +12,22 @@ from eventsourcing.system import MultiThreadedRunner, Runner, SingleThreadedRunn
 from eventsourcing.tests.ramdisk import tmpfile_uris
 from eventsourcing.utils import retry
 
-from kvstore.application import KVStore
+from keyvaluestore.application import KeyValueStore
 from replicatedstatemachine.application import CommandFuture, StateMachineReplica
 from paxos.system import PaxosSystem
 from test_paxos_system import drop_postgres_table
 
 
-class KVSystemTestCase(TestCase):
+class KeyValueSystemTestCase(TestCase):
     persistence_module: str = "eventsourcing.popo"
     runner_class: Type[Runner] = SingleThreadedRunner
     num_participants = 3
 
     def setUp(self):
-        self.system = PaxosSystem(KVStore, self.num_participants)
+        self.system = PaxosSystem(KeyValueStore, self.num_participants)
         self.runner = self.create_runner(
             {
-                StateMachineReplica.COMMAND_CLASS: "kvstore.commands:KVCommand",
+                StateMachineReplica.COMMAND_CLASS: "keyvaluestore.commands:KeyValueStoreCommand",
                 InfrastructureFactory.PERSISTENCE_MODULE: self.persistence_module,
                 StateMachineReplica.AGGREGATE_CACHE_MAXSIZE: 500,
                 StateMachineReplica.AGGREGATE_CACHE_FASTFORWARD: "n",
@@ -64,7 +64,7 @@ class KVSystemTestCase(TestCase):
             return False
 
 
-class TestWithSQLite(KVSystemTestCase):
+class TestWithSQLite(KeyValueSystemTestCase):
     persistence_module = "eventsourcing.sqlite"
 
     def setUp(self):
@@ -73,12 +73,12 @@ class TestWithSQLite(KVSystemTestCase):
 
     def create_runner(self, env: Dict):
         for i in range(self.num_participants):
-            env[f"KVSTORE{i}_SQLITE_DBNAME"] = next(self.temp_files)
-            # env[f"KVSTORE{i}_SQLITE_DBNAME"] = f"file:application{i}?mode=memory&cache=shared"
+            env[f"KEYVALUESTORE{i}_SQLITE_DBNAME"] = next(self.temp_files)
+            # env[f"KEYVALUESTORE{i}_SQLITE_DBNAME"] = f"file:application{i}?mode=memory&cache=shared"
         return super().create_runner(env)
 
 
-class TestWithPostgreSQL(KVSystemTestCase):
+class TestWithPostgreSQL(KeyValueSystemTestCase):
     persistence_module = "eventsourcing.postgres"
 
     def create_runner(self, env: Dict):
@@ -98,16 +98,16 @@ class TestWithPostgreSQL(KVSystemTestCase):
             "eventsourcing",
         )
         for i in range(self.num_participants):
-            drop_postgres_table(datastore, f"kvstore{i}_events")
-            drop_postgres_table(datastore, f"kvstore{i}_snapshots")
-            drop_postgres_table(datastore, f"kvstore{i}_tracking")
+            drop_postgres_table(datastore, f"keyvaluestore{i}_events")
+            drop_postgres_table(datastore, f"keyvaluestore{i}_snapshots")
+            drop_postgres_table(datastore, f"keyvaluestore{i}_tracking")
         super().setUp()
 
 
-class TestSystemSingleThreaded(KVSystemTestCase):
+class TestSystemSingleThreaded(KeyValueSystemTestCase):
     def test_propose_command_execute_query(self):
 
-        apps = [self.get_app(f"KVStore{i}") for i in range(self.num_participants)]
+        apps = [self.get_app(f"KeyValueStore{i}") for i in range(self.num_participants)]
         app0 = apps[0]
 
         # Check each process has expected initial value.
@@ -169,12 +169,12 @@ class TestSystemMultiThreadedWithPostgreSQL(
     pass
 
 
-class TestPerformanceSingleThreaded(KVSystemTestCase):
+class TestPerformanceSingleThreaded(KeyValueSystemTestCase):
     period = 100
 
     def test_performance(self):
         print(type(self))
-        apps = [self.get_app(f"KVStore{i}") for i in range(self.num_participants)]
+        apps = [self.get_app(f"KeyValueStore{i}") for i in range(self.num_participants)]
 
         period = self.period
         n = period * 10
@@ -270,13 +270,13 @@ class TestPerformanceSingleThreadedWithPostgreSQL(
     period = 25
 
 
-class TestPerformanceMultiThreaded(KVSystemTestCase):
+class TestPerformanceMultiThreaded(KeyValueSystemTestCase):
     runner_class = MultiThreadedRunner
     target_rate = 200
 
     def test_performance(self):
         print(type(self))
-        apps = [self.get_app(f"KVStore{i}") for i in range(self.num_participants)]
+        apps = [self.get_app(f"KeyValueStore{i}") for i in range(self.num_participants)]
 
         period = self.target_rate
         interval = 1 / period
@@ -409,4 +409,4 @@ class TestPerformanceMultiThreadedWithPostgreSQL(
     target_rate = 25
 
 
-del KVSystemTestCase
+del KeyValueSystemTestCase

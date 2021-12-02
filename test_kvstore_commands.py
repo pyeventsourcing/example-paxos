@@ -1,14 +1,14 @@
 from unittest import TestCase
 
 from replicatedstatemachine.application import StateMachineReplica
-from kvstore.commands import split
+from keyvaluestore.commands import split
 
 
 class TestHashCommands(TestCase):
     def setUp(self) -> None:
         self.app = StateMachineReplica(
             env={
-                StateMachineReplica.COMMAND_CLASS: "kvstore.commands:KVCommand",
+                StateMachineReplica.COMMAND_CLASS: "keyvaluestore.commands:KeyValueStoreCommand",
             }
         )
 
