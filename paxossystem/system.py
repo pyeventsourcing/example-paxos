@@ -3,7 +3,7 @@ from typing import Type
 
 from eventsourcing.system import System
 
-from paxos.application import PaxosApplication
+from paxossystem.application import PaxosApplication
 
 
 class PaxosSystem(System):

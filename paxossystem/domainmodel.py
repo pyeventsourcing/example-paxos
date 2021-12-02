@@ -4,7 +4,7 @@ from uuid import UUID
 
 from eventsourcing.domain import Aggregate, event
 
-from paxos.composable import ProposalStatus, PaxosInstance, PaxosMessage, Resolution
+from paxossystem.composable import ProposalStatus, PaxosInstance, PaxosMessage, Resolution
 
 
 class PaxosAggregate(Aggregate):

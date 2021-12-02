@@ -2,7 +2,7 @@ from typing import Dict, List, Set
 
 from eventsourcing.persistence import Transcoding
 
-from paxos.composable import (
+from paxossystem.composable import (
     Accept,
     Accepted,
     Nack,

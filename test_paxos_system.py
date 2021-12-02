@@ -12,8 +12,8 @@ from eventsourcing.postgres import PostgresDatastore
 from eventsourcing.system import MultiThreadedRunner, SingleThreadedRunner
 from eventsourcing.utils import retry
 
-from paxos.application import PaxosApplication
-from paxos.system import PaxosSystem
+from paxossystem.application import PaxosApplication
+from paxossystem.system import PaxosSystem
 
 
 def drop_postgres_table(datastore: PostgresDatastore, table_name):

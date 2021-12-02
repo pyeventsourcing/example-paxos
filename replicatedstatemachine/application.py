@@ -22,8 +22,8 @@ from eventsourcing.persistence import EventStore, IntegrityError
 from eventsourcing.utils import resolve_topic
 
 from replicatedstatemachine.exceptions import CommandRejected
-from paxos.application import PaxosApplication
-from paxos.domainmodel import PaxosAggregate
+from paxossystem.application import PaxosApplication
+from paxossystem.domainmodel import PaxosAggregate
 
 
 class StateMachineReplica(PaxosApplication):

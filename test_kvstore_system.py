@@ -14,7 +14,7 @@ from eventsourcing.utils import retry
 
 from keyvaluestore.application import KeyValueStore
 from replicatedstatemachine.application import CommandFuture, StateMachineReplica
-from paxos.system import PaxosSystem
+from paxossystem.system import PaxosSystem
 from test_paxos_system import drop_postgres_table
 
 

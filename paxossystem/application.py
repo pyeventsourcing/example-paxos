@@ -7,10 +7,10 @@ from eventsourcing.persistence import Transcoder
 from eventsourcing.system import ProcessApplication
 from eventsourcing.utils import get_topic
 
-from paxos.cache import CachingApplication
-from paxos.composable import PaxosMessage
-from paxos.domainmodel import PaxosAggregate
-from paxos.transcodings import (
+from paxossystem.cache import CachingApplication
+from paxossystem.composable import PaxosMessage
+from paxossystem.domainmodel import PaxosAggregate
+from paxossystem.transcodings import (
     AcceptAsDict,
     AcceptedAsDict,
     NackAsDict,
