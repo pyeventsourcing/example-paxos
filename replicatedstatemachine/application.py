@@ -5,22 +5,21 @@ from time import time
 from typing import (
     Any,
     Dict,
-    Generic,
-    Iterator,
     List,
     Mapping,
     Optional,
     Tuple,
     Type,
-    cast,
 )
 from uuid import NAMESPACE_URL, UUID, uuid5
 
 from eventsourcing.application import ProcessEvent
-from eventsourcing.domain import Aggregate, AggregateEvent, TAggregate, TDomainEvent
-from eventsourcing.persistence import EventStore, IntegrityError
+from eventsourcing.domain import Aggregate, AggregateEvent, TAggregate
+from eventsourcing.persistence import IntegrityError
 from eventsourcing.utils import resolve_topic
 
+from replicatedstatemachine.domainmodel import PaxosLogged
+from replicatedstatemachine.eventsourcedlog import EventSourcedLog
 from replicatedstatemachine.exceptions import CommandRejected
 from paxossystem.application import PaxosApplication
 from paxossystem.domainmodel import PaxosAggregate
@@ -34,7 +33,7 @@ class StateMachineReplica(PaxosApplication):
     def __init__(self, env: Optional[Mapping[str, str]] = None) -> None:
         super().__init__(env)
         self.futures: Dict[UUID, CommandFuture] = {}
-        self.paxos_log: Log[PaxosLogged] = Log(
+        self.paxos_log: EventSourcedLog[PaxosLogged] = EventSourcedLog(
             self.events, uuid5(NAMESPACE_URL, "/paxoslog"), PaxosLogged
         )
         self.next_paxos_round: Optional[int] = None
@@ -83,8 +82,15 @@ class StateMachineReplica(PaxosApplication):
             paxos_aggregate, resolution_msg = self.process_message_announced(
                 domain_event
             )
-
             process_event.save(paxos_aggregate)
+            # Todo: Think about passing the round number with the proposed value.
+            if len(paxos_aggregate.pending_events) == paxos_aggregate.version:
+                paxos_logged = self.paxos_log.trigger_event(self.next_paxos_round)
+                paxos_id = self.create_paxos_aggregate_id_from_round(paxos_logged.originator_version)
+                if paxos_id != paxos_aggregate.id:
+                    raise Exception("Out of order paxoses :-(")
+                process_event.save(paxos_logged)
+
             if resolution_msg:
                 aggregates = self.execute_proposal(paxos_aggregate.final_value)
                 process_event.save(*aggregates)
@@ -144,60 +150,3 @@ class CommandFuture(Future):
         self.finished: Optional[float] = None
         if results_queue:
             self.add_done_callback(lambda future: results_queue.put(future))
-
-
-class Log(Generic[TDomainEvent]):
-    def __init__(
-        self,
-        events: EventStore[AggregateEvent[Aggregate]],
-        originator_id: UUID,
-        logged_cls: Type[TDomainEvent],
-    ):
-        self.events = events
-        self.originator_id = originator_id
-        self.logged_cls = logged_cls
-
-    def trigger_event(self, next_originator_version: Optional[int]) -> TDomainEvent:
-        if next_originator_version is None:
-            last_logged = self._get_last_logged()
-            if last_logged:
-                next_originator_version = last_logged.originator_version + 1
-            else:
-                next_originator_version = Aggregate.INITIAL_VERSION
-        return self.logged_cls(  # type: ignore
-            originator_id=self.originator_id,
-            originator_version=next_originator_version,
-            timestamp=self.logged_cls.create_timestamp(),
-        )
-
-    def get(self, limit: int = 10, offset: int = 0) -> Iterator[TDomainEvent]:
-        # Calculate lte.
-        lte = None
-        if offset > 0:
-            last = self._get_last_logged()
-            if last:
-                lte = last.originator_version - offset
-
-        # Get logged events.
-        return cast(
-            Iterator[TDomainEvent],
-            self.events.get(
-                originator_id=self.originator_id,
-                lte=lte,
-                desc=True,
-                limit=limit,
-            ),
-        )
-
-    def _get_last_logged(
-        self,
-    ) -> Optional[TDomainEvent]:
-        events = self.events.get(originator_id=self.originator_id, desc=True, limit=1)
-        try:
-            return cast(TDomainEvent, next(events))
-        except StopIteration:
-            return None
-
-
-class PaxosLogged(AggregateEvent[Aggregate]):
-    pass

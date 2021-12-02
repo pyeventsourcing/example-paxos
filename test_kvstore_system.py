@@ -272,7 +272,7 @@ class TestPerformanceSingleThreadedWithPostgreSQL(
 
 class TestPerformanceMultiThreaded(KeyValueSystemTestCase):
     runner_class = MultiThreadedRunner
-    target_rate = 200
+    target_rate = 100
 
     def test_performance(self):
         print(type(self))
