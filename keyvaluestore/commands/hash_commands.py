@@ -7,7 +7,7 @@ from eventsourcing.domain import Aggregate
 from replicatedstatemachine.application import StateMachineReplica
 from keyvaluestore.commands import KeyValueStoreCommand
 from keyvaluestore.domainmodel import (
-    KeyIndex,
+    KeyNameIndex,
 )
 
 
@@ -88,7 +88,7 @@ class HGETCommand(HashCommand):
         return self.cmd[2]
 
     def do_query(self, app: StateMachineReplica) -> Any:
-        index_id = KeyIndex.create_id(self.key_name)
+        index_id = KeyNameIndex.create_id(self.key_name)
         try:
             index = app.repository.get(
                 index_id,

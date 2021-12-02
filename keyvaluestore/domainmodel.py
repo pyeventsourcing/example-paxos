@@ -46,7 +46,7 @@ class KeyValueAggregate(Aggregate):
             raise TypeMismatchError(f"Excepted {type_name} but is {self.type_name}")
 
 
-class KeyIndex(Aggregate):
+class KeyNameIndex(Aggregate):
     def __init__(self, key_name: str, ref: Optional[UUID]):
         self.key_name = key_name
         self.ref = ref

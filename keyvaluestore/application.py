@@ -1,9 +1,9 @@
-from keyvaluestore.domainmodel import KeyValueAggregate, KeyIndex
+from keyvaluestore.domainmodel import KeyValueAggregate, KeyNameIndex
 from replicatedstatemachine.application import StateMachineReplica
 
 
 class KeyValueStore(StateMachineReplica):
     snapshotting_intervals = {
         KeyValueAggregate: 100,
-        KeyIndex: 100,
+        KeyNameIndex: 100,
     }
