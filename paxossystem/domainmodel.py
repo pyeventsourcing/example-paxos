@@ -12,71 +12,6 @@ class PaxosAggregate(Aggregate):
     Event-sourced Paxos participant.
     """
 
-    paxos_variables = [
-        "proposed_value",
-        "proposal_id",
-        "promised_id",
-        "accepted_id",
-        "accepted_value",
-        "highest_proposal_id",
-        "promises_received",
-        "nacks_received",
-        "highest_accepted_id",
-        "leader",
-        "proposals",
-        "acceptors",
-        "final_value",
-    ]
-
-    def __init__(self, quorum_size: int, network_uid: str, **kwargs: Any):
-        assert isinstance(quorum_size, int)
-        self.quorum_size = quorum_size
-        self.network_uid = network_uid
-        self.promises_received: Set[str] = set()
-        self.nacks_received: Set[str] = set()
-        self.leader = False
-        self.proposals: Dict[str, ProposalStatus] = {}
-        self.acceptors: Dict[str, str] = {}
-        self.final_value: Any = None
-        super(PaxosAggregate, self).__init__(**kwargs)
-
-    @property
-    def paxos_instance(self) -> PaxosInstance:
-        """
-        Returns instance of PaxosInstance (protocol implementation).
-        """
-        # Construct instance with the constant attributes.
-        instance = PaxosInstance(self.network_uid, self.quorum_size)
-
-        # Set the variable attributes from the aggregate.
-        for name in self.paxos_variables:
-            value = getattr(self, name, None)
-            if value is not None:
-                if isinstance(value, (set, list, dict, tuple)):
-                    value = deepcopy(value)
-                setattr(instance, name, value)
-
-        # Return the instance.
-        return instance
-
-    class Started(Aggregate.Created["PaxosAggregate"]):
-        """
-        Published when a PaxosAggregate is started.
-        """
-
-        quorum_size: int
-        network_uid: str
-
-    class AttributesChanged(Aggregate.Event):
-        """
-        Published when attributes of paxos_instance are changed.
-        """
-
-        changes: Dict
-
-        def apply(self, obj: "PaxosAggregate") -> None:
-            obj.__dict__.update(self.changes)
-
     @classmethod
     def start(
         cls, originator_id: UUID, quorum_size: int, network_uid: str
@@ -91,6 +26,26 @@ class PaxosAggregate(Aggregate):
             quorum_size=quorum_size,
             network_uid=network_uid,
         )
+
+    class Started(Aggregate.Created["PaxosAggregate"]):
+        """
+        Published when a PaxosAggregate is started.
+        """
+
+        quorum_size: int
+        network_uid: str
+
+    def __init__(self, quorum_size: int, network_uid: str, **kwargs: Any):
+        assert isinstance(quorum_size, int)
+        self.quorum_size = quorum_size
+        self.network_uid = network_uid
+        self.promises_received: Set[str] = set()
+        self.nacks_received: Set[str] = set()
+        self.leader = False
+        self.proposals: Dict[str, ProposalStatus] = {}
+        self.acceptors: Dict[str, str] = {}
+        self.final_value: Any = None
+        super(PaxosAggregate, self).__init__(**kwargs)
 
     def propose_value(self, value: Any, assume_leader: bool = False) -> PaxosMessage:
         """
@@ -130,19 +85,17 @@ class PaxosAggregate(Aggregate):
             self.setattrs_from_paxos(paxos)
         return resolution_msg
 
-    class MessageAnnounced(Aggregate.Event):
-        """
-        Published when a Paxos message is announced.
-        """
-
-        msg: PaxosMessage
-
-    # @event("MessageAnnounced")
     def announce(self, msg: PaxosMessage) -> None:
         """
         Announces a Paxos message.
         """
         self.trigger_event(event_class=self.MessageAnnounced, msg=msg)
+
+    class MessageAnnounced(Aggregate.Event):
+        """
+        Published when a Paxos message is announced.
+        """
+        msg: PaxosMessage
 
     def setattrs_from_paxos(self, paxos: PaxosInstance) -> None:
         """
@@ -156,3 +109,48 @@ class PaxosAggregate(Aggregate):
                 setattr(self, name, paxos_value)
         if changes:
             self.trigger_event(event_class=self.AttributesChanged, changes=changes)
+
+    class AttributesChanged(Aggregate.Event):
+        """
+        Published when attributes of paxos_instance are changed.
+        """
+
+        changes: Dict
+
+        def apply(self, obj: "PaxosAggregate") -> None:
+            obj.__dict__.update(self.changes)
+
+    @property
+    def paxos_instance(self) -> PaxosInstance:
+        """
+        Returns instance of PaxosInstance (protocol implementation).
+        """
+        # Construct instance with the constant attributes.
+        instance = PaxosInstance(self.network_uid, self.quorum_size)
+
+        # Set the variable attributes from the aggregate.
+        for name in self.paxos_variables:
+            value = getattr(self, name, None)
+            if value is not None:
+                if isinstance(value, (set, list, dict, tuple)):
+                    value = deepcopy(value)
+                setattr(instance, name, value)
+
+        # Return the instance.
+        return instance
+
+    paxos_variables = [
+        "proposed_value",
+        "proposal_id",
+        "promised_id",
+        "accepted_id",
+        "accepted_value",
+        "highest_proposal_id",
+        "promises_received",
+        "nacks_received",
+        "highest_accepted_id",
+        "leader",
+        "proposals",
+        "acceptors",
+        "final_value",
+    ]

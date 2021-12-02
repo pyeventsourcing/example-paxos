@@ -66,9 +66,7 @@ class PaxosApplication(CachingApplication[Aggregate], ProcessApplication[Aggrega
         return paxos_aggregate
 
     def get_final_value(self, key: UUID) -> PaxosAggregate:
-        return self.repository.get(
-            key,
-        ).final_value
+        return self.repository.get(key).final_value
 
     def policy(
         self,
