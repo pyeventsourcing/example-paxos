@@ -1,82 +1,36 @@
 from copy import deepcopy
 from threading import RLock
-from typing import Any, Dict, Generic, Optional, TypeVar
+from typing import Dict, Generic, Optional, TypeVar
 from uuid import UUID
 
 from eventsourcing.application import (
+    Application,
+    ProcessEvent,
     ProjectorFunctionType,
     Repository,
     mutate_aggregate,
 )
 from eventsourcing.domain import AggregateEvent, Snapshot, TAggregate
 from eventsourcing.persistence import EventStore
+from eventsourcing.utils import strtobool
 
-
-class CachedRepository(Repository[TAggregate]):
-    def __init__(
-        self,
-        event_store: EventStore[AggregateEvent[TAggregate]],
-        snapshot_store: Optional[EventStore[Snapshot[TAggregate]]] = None,
-        cache_size: Optional[int] = None,
-        fast_forward: bool = True,
-    ):
-        super().__init__(event_store, snapshot_store)
-        if cache_size is None:
-            self.cache: Optional[Cache] = None
-        elif cache_size <= 0:
-            self.cache = Cache()
-        else:
-            self.cache = LRUCache(maxsize=cache_size)
-        self.fast_forward = fast_forward
-
-    def get(
-        self,
-        aggregate_id: UUID,
-        version: Optional[int] = None,
-        projector_func: ProjectorFunctionType[TAggregate] = mutate_aggregate,
-    ) -> TAggregate:
-        if self.cache and version is None:
-            try:
-                # Look for aggregate in the cache.
-                aggregate = self.cache.get(aggregate_id)
-            except KeyError:
-                # Reconstruct aggregate from stored events.
-                aggregate = super().get(aggregate_id, projector_func=mutate_aggregate)
-                # Put aggregate in the cache.
-                self.cache.put(aggregate_id, aggregate)
-            else:
-                if self.fast_forward:
-                    # Fast forward cached aggregate.
-                    new_events = self.event_store.get(
-                        originator_id=aggregate_id, gt=aggregate.version
-                    )
-                    aggregate = mutate_aggregate(aggregate, new_events)
-            # Deep copy cached aggregate, so bad mutations don't corrupt cache.
-            aggregate = deepcopy(aggregate)
-        else:
-            # Reconstruct historical version of aggregate from stored events.
-            aggregate = super().get(
-                aggregate_id, version=version, projector_func=mutate_aggregate
-            )
-        return aggregate
-
-
+S = TypeVar("S")
 T = TypeVar("T")
 
 
-class Cache(Generic[T]):
+class Cache(Generic[S, T]):
     def __init__(self):
-        self.cache: Dict[Any, T] = {}
+        self.cache: Dict[S, T] = {}
 
-    def get(self, key: Any) -> T:
+    def get(self, key: S) -> T:
         return self.cache[key]
 
-    def put(self, key: Any, value: T) -> None:
+    def put(self, key: S, value: T) -> None:
         if value is not None:
             self.cache[key] = value
 
 
-class LRUCache(Cache[T]):
+class LRUCache(Cache[S, T]):
     """
     Size limited caching that tracks accesses by recency.
 
@@ -105,7 +59,7 @@ class LRUCache(Cache[T]):
             None,
         ]  # initialize by pointing to self
 
-    def get(self, key: Any) -> T:
+    def get(self, key: S) -> T:
         with self.lock:
             link = self.cache.get(key)
             if link is not None:
@@ -121,7 +75,7 @@ class LRUCache(Cache[T]):
             else:
                 raise KeyError
 
-    def put(self, key: Any, value: T) -> None:
+    def put(self, key: S, value: T) -> None:
         with self.lock:
             link = self.cache.get(key)
             if link is not None:
@@ -164,3 +118,72 @@ class LRUCache(Cache[T]):
                 # Use the __len__() bound method instead of the len() function
                 # which could potentially be wrapped in an lru_cache itself.
                 self.full = self.cache.__len__() >= self.maxsize
+
+
+class CachedRepository(Repository[TAggregate]):
+    def __init__(
+        self,
+        event_store: EventStore[AggregateEvent[TAggregate]],
+        snapshot_store: Optional[EventStore[Snapshot[TAggregate]]] = None,
+        cache_maxsize: Optional[int] = None,
+        fastforward: bool = True,
+    ):
+        super().__init__(event_store, snapshot_store)
+        if cache_maxsize is None:
+            self.cache: Optional[Cache[UUID, TAggregate]] = None
+        elif cache_maxsize <= 0:
+            self.cache = Cache()
+        else:
+            self.cache = LRUCache(maxsize=cache_maxsize)
+        self.fastforward = fastforward
+
+    def get(
+        self,
+        aggregate_id: UUID,
+        version: Optional[int] = None,
+        projector_func: ProjectorFunctionType[TAggregate] = mutate_aggregate,
+    ) -> TAggregate:
+        if self.cache and version is None:
+            try:
+                # Look for aggregate in the cache.
+                aggregate = self.cache.get(aggregate_id)
+            except KeyError:
+                # Reconstruct aggregate from stored events.
+                aggregate = super().get(aggregate_id, projector_func=mutate_aggregate)
+                # Put aggregate in the cache.
+                self.cache.put(aggregate_id, aggregate)
+            else:
+                if self.fastforward:
+                    # Fast forward cached aggregate.
+                    new_events = self.event_store.get(
+                        originator_id=aggregate_id, gt=aggregate.version
+                    )
+                    aggregate = mutate_aggregate(aggregate, new_events)
+            # Deep copy cached aggregate, so bad mutations don't corrupt cache.
+            aggregate = deepcopy(aggregate)
+        else:
+            # Reconstruct historical version of aggregate from stored events.
+            aggregate = super().get(
+                aggregate_id, version=version, projector_func=mutate_aggregate
+            )
+        return aggregate
+
+
+class CachingApplication(Application[TAggregate]):
+    AGGREGATE_CACHE_MAXSIZE = "AGGREGATE_CACHE_MAXSIZE"
+    AGGREGATE_CACHE_FASTFORWARD = "AGGREGATE_CACHE_FASTFORWARD"
+
+    def construct_repository(self) -> CachedRepository[TAggregate]:
+        return CachedRepository(
+            event_store=self.events,
+            snapshot_store=self.snapshots,
+            cache_maxsize=self.env.get(self.AGGREGATE_CACHE_MAXSIZE),
+            fastforward=strtobool(self.env.get(self.AGGREGATE_CACHE_FASTFORWARD, "y")),
+        )
+
+    def record(self, process_event: ProcessEvent) -> Optional[int]:
+        returning = super().record(process_event)
+        for aggregate_id, aggregate in process_event.aggregates.items():
+            if self.repository.cache:
+                self.repository.cache.put(aggregate_id, aggregate)
+        return returning

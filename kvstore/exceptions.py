@@ -1,6 +1,2 @@
-class AggregateVersionMismatch(Exception):
-    pass
-
-
-class CommandRejected(Exception):
+class TypeMismatchError(Exception):
     pass

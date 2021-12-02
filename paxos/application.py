@@ -1,15 +1,14 @@
-from typing import Any, Optional
+from typing import Any
 from uuid import UUID
 
-from eventsourcing.application import AggregateNotFound, ProcessEvent, Repository
+from eventsourcing.application import AggregateNotFound, ProcessEvent
 from eventsourcing.domain import Aggregate, AggregateEvent, TAggregate
 from eventsourcing.persistence import Transcoder
 from eventsourcing.system import ProcessApplication
+from eventsourcing.utils import get_topic
 
-from paxos.cache import CachedRepository
-from paxos.composable import (
-    PaxosMessage,
-)
+from paxos.cache import CachingApplication
+from paxos.composable import PaxosMessage
 from paxos.domainmodel import PaxosAggregate
 from paxos.transcodings import (
     AcceptAsDict,
@@ -24,9 +23,11 @@ from paxos.transcodings import (
 )
 
 
-class PaxosApplication(ProcessApplication[Aggregate]):
+class PaxosApplication(CachingApplication[Aggregate], ProcessApplication[Aggregate]):
     quorum_size: int = 0
-    cache_size = 500
+    follow_topics = [
+        get_topic(PaxosAggregate.MessageAnnounced),
+    ]
 
     @property
     def name(self):
@@ -43,21 +44,6 @@ class PaxosApplication(ProcessApplication[Aggregate]):
         transcoder.register(ResolutionAsDict())
         transcoder.register(SetAsList())
         transcoder.register(ProposalStatusAsDict())
-
-    def construct_repository(self) -> CachedRepository[TAggregate]:
-        return CachedRepository(
-            event_store=self.events,
-            snapshot_store=self.snapshots,
-            cache_size=self.cache_size,
-            fast_forward=False,
-        )
-
-    def record(self, process_event: ProcessEvent) -> Optional[int]:
-        returning = super().record(process_event)
-        for aggregate_id, aggregate in process_event.aggregates.items():
-            if self.repository.cache:
-                self.repository.cache.put(aggregate_id, aggregate)
-        return returning
 
     def propose_value(
         self, key: UUID, value: Any, assume_leader: bool = False
@@ -122,6 +108,4 @@ class PaxosApplication(ProcessApplication[Aggregate]):
         resolution_msg = None
         if paxos_aggregate.final_value is None:
             resolution_msg = paxos_aggregate.receive_message(msg)
-        # if resolution_msg:
-        #     print("Final value:", paxos.final_value)
         return paxos_aggregate, resolution_msg

@@ -1,0 +1,2 @@
+class CommandRejected(Exception):
+    pass

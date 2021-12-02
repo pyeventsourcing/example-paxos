@@ -111,20 +111,20 @@ class PaxosAggregate(Aggregate):
         Responds to messages from other participants.
         """
         resolution_msg = None
+        # Todo: Make it optional not to announce resolution
+        #  (without which it's hard to see final value).
+        do_announce_resolution = False
         if not isinstance(msg, Resolution):
             paxos = self.paxos_instance
             while msg:
-                if isinstance(msg, Resolution):
-                    resolution_msg = msg
-                    break
-                else:
-                    msg = paxos.receive(msg)
-                    # Todo: Make it optional not to announce resolution
-                    #  (without which it's hard to see final value).
-                    do_announce_resolution = True
-                    if msg and (
-                        do_announce_resolution or not isinstance(msg, Resolution)
-                    ):
+                msg = paxos.receive(msg)
+                if msg:
+                    if isinstance(msg, Resolution):
+                        if do_announce_resolution:
+                            self.announce(msg)
+                        resolution_msg = msg
+                        msg = None
+                    else:
                         self.announce(msg)
 
             self.setattrs_from_paxos(paxos)

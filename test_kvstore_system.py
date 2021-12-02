@@ -6,13 +6,14 @@ from typing import Any, Dict, Type, cast
 from unittest import TestCase
 
 from eventsourcing.application import AggregateNotFound
+from eventsourcing.persistence import InfrastructureFactory
 from eventsourcing.postgres import PostgresDatastore
 from eventsourcing.system import MultiThreadedRunner, Runner, SingleThreadedRunner
 from eventsourcing.tests.ramdisk import tmpfile_uris
 from eventsourcing.utils import retry
 
-from kvstore.application import CommandFuture
 from kvstore.application import KVStore
+from replicatedstatemachine.application import CommandFuture, StateMachineReplica
 from paxos.system import PaxosSystem
 from test_paxos_system import drop_postgres_table
 
@@ -24,10 +25,15 @@ class KVSystemTestCase(TestCase):
 
     def setUp(self):
         self.system = PaxosSystem(KVStore, self.num_participants)
-        self.runner = self.create_runner({
-            "PERSISTENCE_MODULE": self.persistence_module
-            # "COMPRESSOR_TOPIC": "zlib"
-        })
+        self.runner = self.create_runner(
+            {
+                StateMachineReplica.COMMAND_CLASS: "kvstore.commands:KVCommand",
+                InfrastructureFactory.PERSISTENCE_MODULE: self.persistence_module,
+                StateMachineReplica.AGGREGATE_CACHE_MAXSIZE: 500,
+                StateMachineReplica.AGGREGATE_CACHE_FASTFORWARD: "n",
+                # "COMPRESSOR_TOPIC": "zlib"
+            }
+        )
         self.runner.start()
 
     def create_runner(self, env: Dict):
@@ -36,13 +42,15 @@ class KVSystemTestCase(TestCase):
     def tearDown(self):
         self.runner.stop()
 
-    def get_app(self, name) -> KVStore:
-        return cast(KVStore, self.runner.apps.get(name))
+    def get_app(self, name) -> StateMachineReplica:
+        return cast(StateMachineReplica, self.runner.apps.get(name))
 
     @retry(
         (AggregateNotFound, AssertionError), max_attempts=1000, wait=0.005, stall=0.005
     )
-    def assert_query(self, app: KVStore, cmd_text: str, expected_value: Any):
+    def assert_query(
+        self, app: StateMachineReplica, cmd_text: str, expected_value: Any
+    ):
         self.assertEqual(app.execute_query(cmd_text), expected_value)
 
     def close_connections_before_forking(self):
@@ -214,10 +222,10 @@ class TestPerformanceSingleThreaded(KVSystemTestCase):
                     avg_latency = sum(latencies[i - period : i]) / period
                     print(
                         f"Completed {i} commands in {duration:.1f}s: "
-                        f"{i/duration:.0f}/s, "
+                        f"{i/duration:.1f}/s, "
                         f"{duration/i:.3f}s/item, "
-                        f"started {period_started_count/period_duration:.0f}/s, "
-                        f"finished {period/finished_duration:.0f}/s, "
+                        f"started {period_started_count/period_duration:.1f}/s, "
+                        f"finished {period/finished_duration:.1f}/s, "
                         f"{finished_duration/period:.3f}s/item, "
                         f"lat {avg_latency:.3f}s"
                     )
@@ -229,7 +237,7 @@ class TestPerformanceSingleThreaded(KVSystemTestCase):
 
         rate = n / (finished_times[n] - started_times[0])
         print()
-        print(f"Rate: {rate:.2f}/s")
+        print(f"Rate: {rate:.1f}/s")
         warm_up_period = 0
         print(f"Min latency: {min(latencies[warm_up_period:n]):.3f}s")
         print(
@@ -264,7 +272,7 @@ class TestPerformanceSingleThreadedWithPostgreSQL(
 
 class TestPerformanceMultiThreaded(KVSystemTestCase):
     runner_class = MultiThreadedRunner
-    target_rate = 100
+    target_rate = 200
 
     def test_performance(self):
         print(type(self))
@@ -289,10 +297,17 @@ class TestPerformanceMultiThreaded(KVSystemTestCase):
                 now = time()
                 started_times.append(now)
                 app.propose_command(
-                    f'HSET myhash{i} field "Hello{i}"',
+                    f'HSET myhash field "Hello{i}"',
                     assume_leader=True,
                     results_queue=results_queue,
                 )
+                # now = time()
+                # started_times.append(now)
+                # app.propose_command(
+                #     f'HSET myhash{i} field "Helloooo{i}"',
+                #     assume_leader=True,
+                #     results_queue=results_queue,
+                # )
                 now = time()
                 sleep_for = max(0, started + (interval * (i + 1)) - now)
                 sleep(sleep_for)
@@ -339,10 +354,10 @@ class TestPerformanceMultiThreaded(KVSystemTestCase):
                                 avg_latency = sum(latencies[i - period : i]) / period
                                 print(
                                     f"Completed {i} commands in {duration:.1f}s: "
-                                    f"{i/duration:.0f}/s, "
+                                    f"{i/duration:.1f}/s, "
                                     f"{duration/i:.3f}s/item, "
-                                    f"started {period_started_count/period_duration:.0f}/s, "
-                                    f"finished {period/finished_duration:.0f}/s, "
+                                    f"started {period_started_count/period_duration:.1f}/s, "
+                                    f"finished {period/finished_duration:.1f}/s, "
                                     f"{finished_duration/period:.3f}s/item, "
                                     f"lat {avg_latency:.3f}s"
                                 )
@@ -361,7 +376,7 @@ class TestPerformanceMultiThreaded(KVSystemTestCase):
 
         rate = n / (finished_times[n] - started_times[0])
         print()
-        print(f"Rate: {rate:.2f}/s")
+        print(f"Rate: {rate:.1f}/s")
         warm_up_period = 0
         print(f"Min latency: {min(latencies[warm_up_period:n]):.3f}s")
         print(
