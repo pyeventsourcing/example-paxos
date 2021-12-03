@@ -7,3 +7,6 @@ class KeyValueStore(StateMachineReplica):
         KeyValueAggregate: 100,
         KeyNameIndex: 100,
     }
+    env = {
+        StateMachineReplica.COMMAND_CLASS: "keyvaluestore.commands:KeyValueStoreCommand",
+    }

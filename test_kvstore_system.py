@@ -27,7 +27,6 @@ class KeyValueSystemTestCase(TestCase):
         self.system = PaxosSystem(KeyValueStore, self.num_participants)
         self.runner = self.create_runner(
             {
-                StateMachineReplica.COMMAND_CLASS: "keyvaluestore.commands:KeyValueStoreCommand",
                 InfrastructureFactory.PERSISTENCE_MODULE: self.persistence_module,
                 StateMachineReplica.AGGREGATE_CACHE_MAXSIZE: 500,
                 StateMachineReplica.AGGREGATE_CACHE_FASTFORWARD: "n",
