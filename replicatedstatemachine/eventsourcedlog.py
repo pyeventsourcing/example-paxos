@@ -16,7 +16,7 @@ class EventSourcedLog(Generic[TDomainEvent]):
         self.originator_id = originator_id
         self.logged_cls = logged_cls
 
-    def trigger_event(self, next_originator_version: Optional[int]) -> TDomainEvent:
+    def trigger_event(self, next_originator_version: Optional[int], **kwargs) -> TDomainEvent:
         if next_originator_version is None:
             last_logged = self.get_last()
             if last_logged:
@@ -27,6 +27,7 @@ class EventSourcedLog(Generic[TDomainEvent]):
             originator_id=self.originator_id,
             originator_version=next_originator_version,
             timestamp=self.logged_cls.create_timestamp(),
+            **kwargs
         )
 
     def get_last(self) -> Optional[TDomainEvent]:
