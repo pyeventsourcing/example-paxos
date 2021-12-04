@@ -1,11 +1,10 @@
 import sys
-from queue import Empty, Queue
+from queue import Queue
 from threading import Thread
 from time import sleep, time
-from typing import Any, Dict, Type, cast
+from typing import Dict, Type, cast
 from unittest import TestCase
 
-from eventsourcing.application import AggregateNotFound
 from eventsourcing.persistence import InfrastructureFactory
 from eventsourcing.postgres import PostgresDatastore
 from eventsourcing.system import MultiThreadedRunner, Runner, SingleThreadedRunner
@@ -43,14 +42,6 @@ class KeyValueSystemTestCase(TestCase):
 
     def get_app(self, name) -> StateMachineReplica:
         return cast(StateMachineReplica, self.runner.apps.get(name))
-
-    @retry(
-        (AggregateNotFound, AssertionError), max_attempts=1000, wait=0.005, stall=0.005
-    )
-    def assert_query(
-        self, app: StateMachineReplica, cmd_text: str, expected_value: Any
-    ):
-        self.assertEqual(app.execute_query(cmd_text), expected_value)
 
     def close_connections_before_forking(self):
         """Implemented by the DjangoTestCase class."""
@@ -111,37 +102,37 @@ class TestSystemSingleThreaded(KeyValueSystemTestCase):
 
         # Check each process has expected initial value.
         for app in apps:
-            self.assert_query(app, "HGET myhash field", None)
+            self.assertEqual(app.execute_query("HGET myhash field"), None)
 
         # Set a value.
-        f = app0.propose_command('HSET myhash field "Hello"', assume_leader=True)
-        f.result()
+        app0.propose_command('HSET myhash field "Hello"').result()
+
+        @retry(AssertionError, max_attempts=10, wait=0.05)
+        def assert_execute_query(cmd, value):
+            self.assertEqual(app.execute_query(cmd), value)
 
         # Check each process has expected final value.
         for app in apps:
-            self.assert_query(app, "HGET myhash field", "Hello")
+            assert_execute_query("HGET myhash field", "Hello")
 
         # Update the value.
-        f = app0.propose_command('HSET myhash field "Helloooo"', assume_leader=True)
-        f.result()
+        app0.propose_command('HSET myhash field "Helloooo"').result()
 
         # Check each process has expected final value.
         for app in apps:
-            self.assert_query(app, "HGET myhash field", "Helloooo")
+            assert_execute_query("HGET myhash field", "Helloooo")
 
         # Delete the value.
-        f = app0.propose_command("HDEL myhash field", assume_leader=True)
-        f.result()
+        app0.propose_command("HDEL myhash field").result()
 
         for app in apps:
-            self.assert_query(app, "HGET myhash field", None)
+            assert_execute_query("HGET myhash field", None)
 
         # Set a value in a different hash.
-        f = app0.propose_command('HSET myhash2 field "Goodbye"', assume_leader=True)
-        f.result()
+        app0.propose_command('HSET myhash2 field "Goodbye"').result()
 
         for app in apps:
-            self.assert_query(app, "HGET myhash2 field", "Goodbye")
+            assert_execute_query("HGET myhash2 field", "Goodbye")
 
 
 class TestSystemSingleThreadedWithSQLite(TestWithSQLite, TestSystemSingleThreaded):
@@ -188,17 +179,11 @@ class TestPerformanceSingleThreaded(KeyValueSystemTestCase):
             # app = apps[i % self.num_participants]
             # app = random.choice(apps)
             app = apps[0]
+            app.assume_leader = True
             now = time()
             started_times.append(now)
             cmd_text = f'HSET myhash{i} field "Hello{i}"'
-            app.propose_command(
-                cmd_text=cmd_text,
-                assume_leader=True,
-                results_queue=results_queue,
-            )
-
-            future = results_queue.get(timeout=0.5)
-
+            future = app.propose_command(cmd_text)
             future.result()
             i_started: float = future.started
             i_finished: float = future.finished
@@ -285,7 +270,7 @@ class TestPerformanceMultiThreaded(KeyValueSystemTestCase):
         finished_times = []
         timings = []
         latencies = []
-        results_queue: "Queue[CommandFuture]" = Queue()
+        futures_queue: "Queue[CommandFuture]" = Queue()
 
         def write():
             started = time()
@@ -293,13 +278,13 @@ class TestPerformanceMultiThreaded(KeyValueSystemTestCase):
                 # app = apps[i % self.num_participants]
                 # app = random.choice(apps)
                 app = apps[0]
+                app.assume_leader = True
                 now = time()
                 started_times.append(now)
-                app.propose_command(
+                future = app.propose_command(
                     f'HSET myhash field "Hello{i}"',
-                    assume_leader=True,
-                    results_queue=results_queue,
                 )
+                futures_queue.put(future)
                 # now = time()
                 # started_times.append(now)
                 # app.propose_command(
@@ -317,54 +302,45 @@ class TestPerformanceMultiThreaded(KeyValueSystemTestCase):
 
             # Check each process has a resolution.
             for i in range(n + 1):
-                is_queue_empty = True
-                while is_queue_empty:
-                    try:
-                        future = results_queue.get(timeout=0.5)
-                    except Empty:
-                        if self.has_runner_errored():
-                            return
+                future = futures_queue.get(timeout=1)
+                i_started: float = future.started
+                future.result(timeout=5)
+                i_finished: float = future.finished
+                timings.append((i_started, i_finished))
+                finished_times.append(i_finished)
+                i_latency = i_finished - i_started
+                latencies.append(i_latency)
+                if i % period == 0:
+                    period_started = time()
+                    started_count = len(started_times)
+                    if i < period:
+                        last_period_started = period_started
+                        last_started_count = started_count
+                        continue
                     else:
-                        is_queue_empty = False
+                        period_started_count = (
+                            started_count - last_started_count
+                        )
+                        duration = finished_times[i] - started_times[0]
+                        period_duration = period_started - last_period_started
+                        finished_duration = (
+                            i_finished - finished_times[i - period]
+                        )
+                        avg_latency = sum(latencies[i - period : i]) / period
+                        print(
+                            f"Completed {i} commands in {duration:.1f}s: "
+                            f"{i/duration:.1f}/s, "
+                            f"{duration/i:.3f}s/item, "
+                            f"started {period_started_count/period_duration:.1f}/s, "
+                            f"finished {period/finished_duration:.1f}/s, "
+                            f"{finished_duration/period:.3f}s/item, "
+                            f"lat {avg_latency:.3f}s"
+                        )
+                        last_period_started = period_started
+                        last_started_count = started_count
 
-                        i_started: float = future.started
-                        future.result()
-                        i_finished: float = future.finished
-                        timings.append((i_started, i_finished))
-                        finished_times.append(i_finished)
-                        i_latency = i_finished - i_started
-                        latencies.append(i_latency)
-                        if i % period == 0:
-                            period_started = time()
-                            started_count = len(started_times)
-                            if i < period:
-                                last_period_started = period_started
-                                last_started_count = started_count
-                                continue
-                            else:
-                                period_started_count = (
-                                    started_count - last_started_count
-                                )
-                                duration = finished_times[i] - started_times[0]
-                                period_duration = period_started - last_period_started
-                                finished_duration = (
-                                    i_finished - finished_times[i - period]
-                                )
-                                avg_latency = sum(latencies[i - period : i]) / period
-                                print(
-                                    f"Completed {i} commands in {duration:.1f}s: "
-                                    f"{i/duration:.1f}/s, "
-                                    f"{duration/i:.3f}s/item, "
-                                    f"started {period_started_count/period_duration:.1f}/s, "
-                                    f"finished {period/finished_duration:.1f}/s, "
-                                    f"{finished_duration/period:.3f}s/item, "
-                                    f"lat {avg_latency:.3f}s"
-                                )
-                                last_period_started = period_started
-                                last_started_count = started_count
-
-                        if self.has_runner_errored():
-                            return
+                if self.has_runner_errored():
+                    return
 
         thread_write = Thread(target=write, daemon=True)
         thread_write.start()

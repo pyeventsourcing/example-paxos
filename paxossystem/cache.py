@@ -65,12 +65,12 @@ class LRUCache(Cache[S, T]):
             if link is not None:
                 # Move the link to the front of the circular queue.
                 link_prev, link_next, _key, result = link
-                link_prev[LRUCache.NEXT] = link_next
-                link_next[LRUCache.PREV] = link_prev
-                last = self.root[LRUCache.PREV]
-                last[LRUCache.NEXT] = self.root[LRUCache.PREV] = link
-                link[LRUCache.PREV] = last
-                link[LRUCache.NEXT] = self.root
+                link_prev[self.NEXT] = link_next
+                link_next[self.PREV] = link_prev
+                last = self.root[self.PREV]
+                last[self.NEXT] = self.root[self.PREV] = link
+                link[self.PREV] = last
+                link[self.NEXT] = self.root
                 return result
             else:
                 raise KeyError
@@ -80,30 +80,30 @@ class LRUCache(Cache[S, T]):
             link = self.cache.get(key)
             if link is not None:
                 # Set value.
-                link[LRUCache.RESULT] = value
+                link[self.RESULT] = value
                 # Move the link to the front of the circular queue.
                 link_prev, link_next, _key, result = link
-                link_prev[LRUCache.NEXT] = link_next
-                link_next[LRUCache.PREV] = link_prev
-                last = self.root[LRUCache.PREV]
-                last[LRUCache.NEXT] = self.root[LRUCache.PREV] = link
-                link[LRUCache.PREV] = last
-                link[LRUCache.NEXT] = self.root
+                link_prev[self.NEXT] = link_next
+                link_next[self.PREV] = link_prev
+                last = self.root[self.PREV]
+                last[self.NEXT] = self.root[self.PREV] = link
+                link[self.PREV] = last
+                link[self.NEXT] = self.root
             elif self.full:
                 # Use the old root to store the new key and result.
                 oldroot = self.root
-                oldroot[LRUCache.KEY] = key
-                oldroot[LRUCache.RESULT] = value
+                oldroot[self.KEY] = key
+                oldroot[self.RESULT] = value
                 # Empty the oldest link and make it the new root.
                 # Keep a reference to the old key and old result to
                 # prevent their ref counts from going to zero during the
                 # update. That will prevent potentially arbitrary object
                 # clean-up code (i.e. __del__) from running while we're
                 # still adjusting the links.
-                self.root = oldroot[LRUCache.NEXT]
-                oldkey = self.root[LRUCache.KEY]
-                _ = self.root[LRUCache.RESULT]
-                self.root[LRUCache.KEY] = self.root[LRUCache.RESULT] = None
+                self.root = oldroot[self.NEXT]
+                oldkey = self.root[self.KEY]
+                _ = self.root[self.RESULT]
+                self.root[self.KEY] = self.root[self.RESULT] = None
                 # Now update the cache dictionary.
                 del self.cache[oldkey]
                 # Save the potentially reentrant cache[key] assignment
@@ -112,9 +112,9 @@ class LRUCache(Cache[S, T]):
                 self.cache[key] = oldroot
             else:
                 # Put result in a new link at the front of the queue.
-                last = self.root[LRUCache.PREV]
+                last = self.root[self.PREV]
                 link = [last, self.root, key, value]
-                last[LRUCache.NEXT] = self.root[LRUCache.PREV] = self.cache[key] = link
+                last[self.NEXT] = self.root[self.PREV] = self.cache[key] = link
                 # Use the __len__() bound method instead of the len() function
                 # which could potentially be wrapped in an lru_cache itself.
                 self.full = self.cache.__len__() >= self.maxsize

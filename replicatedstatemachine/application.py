@@ -26,6 +26,14 @@ from paxossystem.application import PaxosApplication
 from paxossystem.domainmodel import PaxosAggregate
 
 
+class CommandFuture(Future):
+    def __init__(self, cmd_text: str):
+        super(CommandFuture, self).__init__()
+        self.original_cmd_text = cmd_text
+        self.started: float = time()
+        self.finished: Optional[float] = None
+
+
 class StateMachineReplica(PaxosApplication):
     COMMAND_CLASS = "COMMAND_CLASS"
     pull_section_size = 100
@@ -33,28 +41,24 @@ class StateMachineReplica(PaxosApplication):
 
     def __init__(self, env: Optional[Mapping[str, str]] = None) -> None:
         super().__init__(env)
-        self.futures = LRUCache(maxsize=100)
+        self.futures = LRUCache(maxsize=1000)
         self.paxos_log: EventSourcedLog[PaxosLogged] = EventSourcedLog(
             self.events, uuid5(NAMESPACE_URL, "/paxoslog"), PaxosLogged
         )
         self.next_paxos_round: Optional[int] = None
         command_class_topic = self.env.get(self.COMMAND_CLASS)
         self.command_class: Type[Command] = resolve_topic(command_class_topic)
+        self.assume_leader = False
 
-    def propose_command(
-        self,
-        cmd_text: str,
-        assume_leader: bool = False,
-        results_queue: "Optional[Queue[CommandFuture]]" = None,
-    ) -> Future:
-        future = CommandFuture(cmd_text=cmd_text, results_queue=results_queue)
+    def propose_command(self, cmd_text: str) -> CommandFuture:
+        future = CommandFuture(cmd_text=cmd_text)
         if self.num_participants > 1:
             paxos_logged = self.paxos_log.trigger_event(self.next_paxos_round)
             proposal_key = self.create_paxos_aggregate_id_from_round(
                 paxos_logged.originator_version
             )
             self.futures.put(proposal_key, future)
-            paxos_aggregate = self.start_paxos(proposal_key, cmd_text, assume_leader)
+            paxos_aggregate = self.start_paxos(proposal_key, cmd_text, self.assume_leader)
             try:
                 self.save(paxos_aggregate, paxos_logged)
             except IntegrityError as e:
@@ -63,8 +67,7 @@ class StateMachineReplica(PaxosApplication):
             else:
                 self.next_paxos_round = paxos_logged.originator_version + 1
         else:
-            aggregates, result = self.execute_proposal(cmd_text)
-            self.save(*aggregates)
+            result = self.execute_proposal(cmd_text)
             future.finished = time()
             future.set_result(result)
         return future
@@ -100,23 +103,22 @@ class StateMachineReplica(PaxosApplication):
                 process_event.save(paxos_logged)
 
             if resolution_msg:
-                aggregates, result = self.execute_proposal(paxos_aggregate.final_value)
-                process_event.save(*aggregates)
+                result = self.execute_proposal(paxos_aggregate.final_value)
                 try:
                     future = self.futures.get(paxos_aggregate.id)
                 except KeyError:
-                    # Might not be the application which proposed the command.
                     pass
                 else:
-
                     future.finished = time()
                     # Todo: Check original_cmd_text equals final value, otherwise raise an error.
                     # Todo: Capture that, and any other actual command execution errors, and call set_exception().
                     future.set_result(result)
 
-    def execute_proposal(self, cmd_text: str) -> Tuple[Tuple[Aggregate, ...], Any]:
+    def execute_proposal(self, cmd_text: str) -> Any:
         cmd = self.command_class.parse(cmd_text)
-        return cmd.execute(self)
+        aggregates, result = cmd.execute(self)
+        self.save(*aggregates)
+        return result
 
     def execute_query(self, cmd_text: str):
         cmd = self.command_class.parse(cmd_text)
@@ -147,13 +149,3 @@ class Command(ABC):
     @abstractmethod
     def do_query(self, app: StateMachineReplica) -> Any:
         pass
-
-
-class CommandFuture(Future):
-    def __init__(self, cmd_text: str, results_queue: "Optional[Queue[CommandFuture]]"):
-        super(CommandFuture, self).__init__()
-        self.original_cmd_text = cmd_text
-        self.started: float = time()
-        self.finished: Optional[float] = None
-        if results_queue:
-            self.add_done_callback(lambda future: results_queue.put(future))
