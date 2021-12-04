@@ -112,7 +112,6 @@ class StateMachineReplica(PaxosApplication):
                     future.finished = time()
                     # Todo: Check original_cmd_text equals final value, otherwise raise an error.
                     # Todo: Capture that, and any other actual command execution errors, and call set_exception().
-                    # Todo: Get actual command execution results and call set_result().
                     future.set_result(result)
 
     def execute_proposal(self, cmd_text: str) -> Tuple[Tuple[Aggregate, ...], Any]:
