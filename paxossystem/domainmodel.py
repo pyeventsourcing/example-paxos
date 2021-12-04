@@ -97,7 +97,7 @@ class PaxosAggregate(Aggregate):
                     else:
                         self.announce(msg)
 
-            self.setattrs_from_paxos(paxos)
+        self.setattrs_from_paxos(paxos)
         return resolution_msg
 
     def announce(self, msg: PaxosMessage) -> None:

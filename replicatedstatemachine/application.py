@@ -18,7 +18,7 @@ from eventsourcing.domain import Aggregate, AggregateEvent, TAggregate
 from eventsourcing.persistence import IntegrityError
 from eventsourcing.utils import resolve_topic
 
-from paxossystem.cache import LRUCache
+from paxossystem.cache import Cache, LRUCache
 from replicatedstatemachine.domainmodel import PaxosLogged
 from replicatedstatemachine.eventsourcedlog import EventSourcedLog
 from replicatedstatemachine.exceptions import CommandRejected
@@ -36,19 +36,25 @@ class CommandFuture(Future):
 
 class StateMachineReplica(PaxosApplication):
     COMMAND_CLASS = "COMMAND_CLASS"
+    FUTURES_CACHE_MAXSIZE = "FUTURES_CACHE_MAXSIZE"
     pull_section_size = 100
     log_section_size = 100
 
     def __init__(self, env: Optional[Mapping[str, str]] = None) -> None:
         super().__init__(env)
-        self.futures = LRUCache(maxsize=1000)
+        command_class_topic = self.env.get(self.COMMAND_CLASS)
+        self.command_class: Type[Command] = resolve_topic(command_class_topic)
+        futures_cache_maxsize_envvar = self.env.get(self.FUTURES_CACHE_MAXSIZE, "1000")
+        if futures_cache_maxsize_envvar:
+            futures_cache_maxsize = int(futures_cache_maxsize_envvar)
+            self.futures: Cache[UUID, CommandFuture] = LRUCache(maxsize=futures_cache_maxsize)
+        else:
+            self.futures = Cache()
+
         self.paxos_log: EventSourcedLog[PaxosLogged] = EventSourcedLog(
             self.events, uuid5(NAMESPACE_URL, "/paxoslog"), PaxosLogged
         )
         self.next_paxos_round: Optional[int] = None
-        command_class_topic = self.env.get(self.COMMAND_CLASS)
-        self.command_class: Type[Command] = resolve_topic(command_class_topic)
-        self.assume_leader = False
 
     def propose_command(self, cmd_text: str) -> CommandFuture:
         future = CommandFuture(cmd_text=cmd_text)
@@ -58,7 +64,7 @@ class StateMachineReplica(PaxosApplication):
                 paxos_logged.originator_version
             )
             self.futures.put(proposal_key, future)
-            paxos_aggregate = self.start_paxos(proposal_key, cmd_text, self.assume_leader)
+            paxos_aggregate = self.start_paxos(proposal_key, cmd_text)
             try:
                 self.save(paxos_aggregate, paxos_logged)
             except IntegrityError as e:
@@ -103,16 +109,29 @@ class StateMachineReplica(PaxosApplication):
                 process_event.save(paxos_logged)
 
             if resolution_msg:
-                result = self.execute_proposal(paxos_aggregate.final_value)
                 try:
-                    future = self.futures.get(paxos_aggregate.id)
+                    future: Optional[CommandFuture] = self.futures.get(paxos_aggregate.id)
                 except KeyError:
-                    pass
+                    future = None
+                try:
+                    result = self.execute_proposal(paxos_aggregate.final_value)
+                except Exception as e:
+                    if future:
+                        future.set_exception(exception=e)
                 else:
-                    future.finished = time()
-                    # Todo: Check original_cmd_text equals final value, otherwise raise an error.
-                    # Todo: Capture that, and any other actual command execution errors, and call set_exception().
-                    future.set_result(result)
+                    if future:
+                        future.finished = time()
+                        if future.original_cmd_text != paxos_aggregate.final_value:
+                            future.set_exception(
+                                CommandRejected(
+                                    "Executed other command '{}' not original '{}'".format(
+                                        paxos_aggregate.final_value,
+                                        future.original_cmd_text,
+                                    )
+                                )
+                            )
+                        else:
+                            future.set_result(result)
 
     def execute_proposal(self, cmd_text: str) -> Any:
         cmd = self.command_class.parse(cmd_text)

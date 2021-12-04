@@ -1,4 +1,4 @@
-from typing import Any
+from typing import Any, Mapping, Optional
 from uuid import UUID
 
 from eventsourcing.application import AggregateNotFound, ProcessEvent
@@ -28,7 +28,11 @@ class PaxosApplication(CachingApplication[Aggregate], ProcessApplication[Aggrega
     follow_topics = [
         get_topic(PaxosAggregate.MessageAnnounced),
     ]
-    announce_resolutions = False
+
+    def __init__(self, env: Optional[Mapping[str, str]] = None) -> None:
+        super().__init__(env)
+        self.assume_leader = False
+        self.announce_resolutions = True
 
     @property
     def name(self):
@@ -46,17 +50,15 @@ class PaxosApplication(CachingApplication[Aggregate], ProcessApplication[Aggrega
         transcoder.register(SetAsList())
         transcoder.register(ProposalStatusAsDict())
 
-    def propose_value(
-        self, key: UUID, value: Any, assume_leader: bool = False
-    ) -> PaxosAggregate:
+    def propose_value(self, key: UUID, value: Any) -> PaxosAggregate:
         """
         Starts new Paxos aggregate and proposes a value for a key.
         """
-        paxos_aggregate = self.start_paxos(key, value, assume_leader)
+        paxos_aggregate = self.start_paxos(key, value)
         self.save(paxos_aggregate)
         return paxos_aggregate  # in case it's new
 
-    def start_paxos(self, key, value, assume_leader):
+    def start_paxos(self, key, value):
         assert self.num_participants > 1
         assert isinstance(key, UUID)
         quorum_size = 1 + self.num_participants // 2
@@ -66,7 +68,7 @@ class PaxosApplication(CachingApplication[Aggregate], ProcessApplication[Aggrega
             network_uid=self.name,
             announce_resolution=self.announce_resolutions,
         )
-        msg = paxos_aggregate.propose_value(value, assume_leader=assume_leader)
+        msg = paxos_aggregate.propose_value(value, assume_leader=self.assume_leader)
         paxos_aggregate.receive_message(msg)
         return paxos_aggregate
 

@@ -1,4 +1,5 @@
 import sys
+from concurrent.futures import TimeoutError
 from queue import Queue
 from threading import Thread
 from time import sleep, time
@@ -173,13 +174,12 @@ class TestPerformanceSingleThreaded(KeyValueSystemTestCase):
         finished_times = []
         timings = []
         latencies = []
-        results_queue: "Queue[CommandFuture]" = Queue()
 
         for i in list(range(n + 1)):
             # app = apps[i % self.num_participants]
             # app = random.choice(apps)
             app = apps[0]
-            app.assume_leader = True
+            app.assume_leader = False
             now = time()
             started_times.append(now)
             cmd_text = f'HSET myhash{i} field "Hello{i}"'
@@ -278,7 +278,7 @@ class TestPerformanceMultiThreaded(KeyValueSystemTestCase):
                 # app = apps[i % self.num_participants]
                 # app = random.choice(apps)
                 app = apps[0]
-                app.assume_leader = True
+                app.assume_leader = False
                 now = time()
                 started_times.append(now)
                 future = app.propose_command(
@@ -304,7 +304,10 @@ class TestPerformanceMultiThreaded(KeyValueSystemTestCase):
             for i in range(n + 1):
                 future = futures_queue.get(timeout=1)
                 i_started: float = future.started
-                future.result(timeout=5)
+                try:
+                    future.result(timeout=5)
+                except TimeoutError:
+                    raise Exception("Timeout waiting for future")
                 i_finished: float = future.finished
                 timings.append((i_started, i_finished))
                 finished_times.append(i_finished)

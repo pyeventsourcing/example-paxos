@@ -133,7 +133,7 @@ class TestPaxosSystem(unittest.TestCase):
         for key, value in keys_and_values.items():
             # app = random.choice([app0, app1, app2])
             app = app0
-            app.propose_value(key, value, assume_leader=False)
+            app.propose_value(key, value)
 
         # Check each process has a resolution.
         for key, value in keys_and_values.items():

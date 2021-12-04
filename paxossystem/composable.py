@@ -79,7 +79,10 @@ class ProposalID(object):
             return [self.number, self.uid] == other
 
     def __repr__(self):
-        return 'ProposalID(number={}, uid="{}")'.format(self.number, self.uid)
+        return "{}({})".format(
+            self.__class__.__name__,
+            ", ".join("{}={}".format(k, repr(v)) for k, v in self.__dict__.items())
+        )
 
     def __hash__(self):
         return hash((self.number, self.uid))
@@ -91,6 +94,12 @@ class PaxosMessage(object):
     """
 
     from_uid = None  # Set by subclass constructor
+
+    def __repr__(self):
+        return "{}({})".format(
+            self.__class__.__name__,
+            ", ".join("{}={}".format(k, repr(v)) for k, v in self.__dict__.items())
+        )
 
 
 class Prepare(PaxosMessage):
