@@ -238,11 +238,11 @@ class TestPerformanceSingleThreaded(KeyValueSystemTestCase):
         print()
         print(f"Rate: {rate:.1f}/s")
         warm_up_period = 0
-        print(f"Min latency: {min(latencies[warm_up_period:n]):.3f}s")
+        print(f"Min latency: {min(latencies[warm_up_period:n]):.4f}s")
         print(
-            f"Avg latency: {sum(latencies[warm_up_period:n]) / (n - warm_up_period):.3f}s"
+            f"Avg latency: {sum(latencies[warm_up_period:n]) / (n - warm_up_period):.4f}s"
         )
-        print(f"Max latency: {max(latencies[warm_up_period:n]):.3f}s")
+        print(f"Max latency: {max(latencies[warm_up_period:n]):.4f}s")
 
         previous_finished_time = None
         for i, timing in enumerate(timings):
@@ -377,11 +377,11 @@ class TestPerformanceMultiThreaded(KeyValueSystemTestCase):
         print()
         print(f"Rate: {rate:.1f}/s")
         warm_up_period = 0
-        print(f"Min latency: {min(latencies[warm_up_period:n]):.3f}s")
+        print(f"Min latency: {min(latencies[warm_up_period:n]):.4f}s")
         print(
-            f"Avg latency: {sum(latencies[warm_up_period:n]) / (n - warm_up_period):.3f}s"
+            f"Avg latency: {sum(latencies[warm_up_period:n]) / (n - warm_up_period):.4f}s"
         )
-        print(f"Max latency: {max(latencies[warm_up_period:n]):.3f}s")
+        print(f"Max latency: {max(latencies[warm_up_period:n]):.4f}s")
 
         previous_finished_time = None
         for i, timing in enumerate(timings):

@@ -18,6 +18,7 @@ from eventsourcing.domain import Aggregate, AggregateEvent, TAggregate
 from eventsourcing.persistence import IntegrityError
 from eventsourcing.utils import resolve_topic
 
+from paxossystem.cache import LRUCache
 from replicatedstatemachine.domainmodel import PaxosLogged
 from replicatedstatemachine.eventsourcedlog import EventSourcedLog
 from replicatedstatemachine.exceptions import CommandRejected
@@ -32,7 +33,7 @@ class StateMachineReplica(PaxosApplication):
 
     def __init__(self, env: Optional[Mapping[str, str]] = None) -> None:
         super().__init__(env)
-        self.futures: Dict[UUID, CommandFuture] = {}
+        self.futures = LRUCache(maxsize=100)
         self.paxos_log: EventSourcedLog[PaxosLogged] = EventSourcedLog(
             self.events, uuid5(NAMESPACE_URL, "/paxoslog"), PaxosLogged
         )
@@ -46,22 +47,27 @@ class StateMachineReplica(PaxosApplication):
         assume_leader: bool = False,
         results_queue: "Optional[Queue[CommandFuture]]" = None,
     ) -> Future:
-        paxos_logged = self.paxos_log.trigger_event(self.next_paxos_round)
-        proposal_key = self.create_paxos_aggregate_id_from_round(
-            paxos_logged.originator_version
-        )
         future = CommandFuture(cmd_text=cmd_text, results_queue=results_queue)
-        self.futures[proposal_key] = future
-        paxos_aggregate = self.start_paxos(proposal_key, cmd_text, assume_leader)
-
-        try:
-            self.save(paxos_aggregate, paxos_logged)
-        except IntegrityError as e:
-            self.next_paxos_round = None
-            raise CommandRejected from e
+        if self.num_participants > 1:
+            paxos_logged = self.paxos_log.trigger_event(self.next_paxos_round)
+            proposal_key = self.create_paxos_aggregate_id_from_round(
+                paxos_logged.originator_version
+            )
+            self.futures.put(proposal_key, future)
+            paxos_aggregate = self.start_paxos(proposal_key, cmd_text, assume_leader)
+            try:
+                self.save(paxos_aggregate, paxos_logged)
+            except IntegrityError as e:
+                self.next_paxos_round = None
+                raise CommandRejected from e
+            else:
+                self.next_paxos_round = paxos_logged.originator_version + 1
         else:
-            self.next_paxos_round = paxos_logged.originator_version + 1
-            return future
+            aggregates, result = self.execute_proposal(cmd_text)
+            self.save(*aggregates)
+            future.finished = time()
+            future.set_result(result)
+        return future
 
     def create_paxos_aggregate_id_from_round(self, round: int) -> UUID:
         return uuid5(
@@ -94,10 +100,10 @@ class StateMachineReplica(PaxosApplication):
                 process_event.save(paxos_logged)
 
             if resolution_msg:
-                aggregates = self.execute_proposal(paxos_aggregate.final_value)
+                aggregates, result = self.execute_proposal(paxos_aggregate.final_value)
                 process_event.save(*aggregates)
                 try:
-                    future = self.futures[paxos_aggregate.id]
+                    future = self.futures.get(paxos_aggregate.id)
                 except KeyError:
                     # Might not be the application which proposed the command.
                     pass
@@ -107,9 +113,9 @@ class StateMachineReplica(PaxosApplication):
                     # Todo: Check original_cmd_text equals final value, otherwise raise an error.
                     # Todo: Capture that, and any other actual command execution errors, and call set_exception().
                     # Todo: Get actual command execution results and call set_result().
-                    future.set_result("DONE")
+                    future.set_result(result)
 
-    def execute_proposal(self, cmd_text: str) -> Tuple[Aggregate, ...]:
+    def execute_proposal(self, cmd_text: str) -> Tuple[Tuple[Aggregate, ...], Any]:
         cmd = self.command_class.parse(cmd_text)
         return cmd.execute(self)
 
@@ -136,7 +142,7 @@ class Command(ABC):
         pass
 
     @abstractmethod
-    def execute(self, app: StateMachineReplica) -> Tuple[Aggregate, ...]:
+    def execute(self, app: StateMachineReplica) -> Tuple[Tuple[Aggregate, ...], Any]:
         pass
 
     @abstractmethod

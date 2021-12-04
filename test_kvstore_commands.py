@@ -1,14 +1,15 @@
+from decimal import Decimal
 from unittest import TestCase
 
-from replicatedstatemachine.application import StateMachineReplica
+from keyvaluestore.application import KeyValueStore
 from keyvaluestore.commands import split
 
 
 class TestHashCommands(TestCase):
     def setUp(self) -> None:
-        self.app = StateMachineReplica(
+        self.app = KeyValueStore(
             env={
-                StateMachineReplica.COMMAND_CLASS: "keyvaluestore.commands:KeyValueStoreCommand",
+                "COMMAND_CLASS": "keyvaluestore.commands:KeyValueStoreCommand",
             }
         )
 
@@ -17,15 +18,15 @@ class TestHashCommands(TestCase):
         self.assertEqual(self.app.execute_query("HGET myhash field"), None)
 
         # Create and execute proposal to set field.
-        aggregates = self.app.execute_proposal('HSET myhash field "value"')
-        self.app.save(*aggregates)
+        result = self.app.propose_command('HSET myhash field "value"').result()
+        self.assertEqual(result, 1)
 
         # Check we can get the field.
         self.assertEqual(self.app.execute_query("HGET myhash field"), "value")
 
         # Create and execute proposal to update field.
-        aggregates = self.app.execute_proposal("HSET myhash field value2")
-        self.app.save(*aggregates)
+        result = self.app.propose_command("HSET myhash field value2").result()
+        self.assertEqual(result, 1)
 
         # Check we can get the updated field value.
         self.assertEqual(self.app.execute_query("HGET myhash field"), "value2")
@@ -34,82 +35,86 @@ class TestHashCommands(TestCase):
         self.assertEqual(self.app.execute_query("HGET myhash2 field"), None)
 
         # Create and execute proposal to set field.
-        aggregates = self.app.execute_proposal('HSET myhash2 field "value"')
-        self.app.save(*aggregates)
+        self.app.propose_command('HSET myhash2 field "value"')
 
         # Check we can get the field.
         self.assertEqual(self.app.execute_query("HGET myhash2 field"), "value")
 
     def test_hdel_command(self):
         # Create and execute proposal to set field.
-        aggregates = self.app.execute_proposal('HSET myhash field "value"')
-        self.app.save(*aggregates)
+        self.app.propose_command('HSET myhash field "value"')
 
         # Check the field has been set.
         self.assertEqual(self.app.execute_query("HGET myhash field"), "value")
 
         # Propose and execute command to del field.
-        aggregates = self.app.execute_proposal("HDEL myhash field")
-        self.app.save(*aggregates)
+        result = self.app.propose_command("HDEL myhash field").result()
+        self.assertEqual(result, 1)
 
         # Check the field has been deleted.
         self.assertEqual(self.app.execute_query("HGET myhash field"), None)
 
+        # Propose and execute command to del field.
+        result = self.app.propose_command("HDEL myhash field").result()
+        self.assertEqual(result, 0)
+
     def test_hsetnx_command(self):
         # Create and execute proposal to set field.
-        aggregates = self.app.execute_proposal('HSET myhash field "value"')
-        self.app.save(*aggregates)
+        result = self.app.propose_command('HSET myhash field "value"').result()
+        self.assertEqual(result, 1)
 
         # Check the field has been set.
         self.assertEqual(self.app.execute_query("HGET myhash field"), "value")
 
         # Propose and execute command to update field if not exists.
-        aggregates = self.app.execute_proposal("HSETNX myhash field value2")
-        self.app.save(*aggregates)
+        result = self.app.propose_command("HSETNX myhash field value2").result()
+        self.assertEqual(result, 0)
 
         # Check existing field has not updated.
         self.assertEqual(self.app.execute_query("HGET myhash field"), "value")
 
+        # Check non-existing field has not been set.
+        self.assertEqual(self.app.execute_query("HGET myhash field2"), None)
+
         # Propose and execute command to update field if not exists.
-        aggregates = self.app.execute_proposal("HSETNX myhash field2 value2")
-        self.app.save(*aggregates)
+        result = self.app.propose_command("HSETNX myhash field2 value2").result()
+        self.assertEqual(result, 1)
 
         # Check the new field has been set.
         self.assertEqual(self.app.execute_query("HGET myhash field2"), "value2")
 
     def test_hincrby_command(self):
         # Create and execute proposal to set field.
-        aggregates = self.app.execute_proposal("HSET myhash field 2")
-        self.app.save(*aggregates)
+        result = self.app.propose_command("HSET myhash field 2").result()
+        self.assertEqual(result, 1)
 
         # Check the field has been set.
         self.assertEqual(self.app.execute_query("HGET myhash field"), "2")
 
         # Propose and execute command to increment field.
-        aggregates = self.app.execute_proposal("HINCRBY myhash field 5")
-        self.app.save(*aggregates)
+        result = self.app.propose_command("HINCRBY myhash field 5").result()
+        self.assertEqual(result, Decimal("7"))
 
         # Check the field has been incremented.
         self.assertEqual(self.app.execute_query("HGET myhash field"), "7")
 
         # Propose and execute command to decrement field.
-        aggregates = self.app.execute_proposal("HINCRBY myhash field -3")
-        self.app.save(*aggregates)
+        result = self.app.propose_command("HINCRBY myhash field -3").result()
+        self.assertEqual(result, Decimal("4"))
 
         # Check existing field has been decremented.
         self.assertEqual(self.app.execute_query("HGET myhash field"), "4")
 
     def test_rename(self):
         # Create and execute proposal to set field.
-        aggregates = self.app.execute_proposal('HSET myhash field "value"')
-        self.app.save(*aggregates)
+        self.app.propose_command('HSET myhash field "value"')
 
         # Check the field has been set.
         self.assertEqual(self.app.execute_query("HGET myhash field"), "value")
 
         # Create and execute proposal to rename key.
-        aggregates = self.app.execute_proposal("RENAME myhash yourhash")
-        self.app.save(*aggregates)
+        result = self.app.propose_command("RENAME myhash yourhash").result()
+        self.assertEqual(result, "OK")
 
         # Check the field has been renamed.
         self.assertEqual(self.app.execute_query("HGET myhash field"), None)

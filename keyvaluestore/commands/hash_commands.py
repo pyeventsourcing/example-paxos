@@ -24,10 +24,10 @@ class HSETCommand(HashCommand):
     def field_value(self) -> str:
         return self.cmd[3]
 
-    def execute(self, app: StateMachineReplica) -> Tuple[Aggregate, ...]:
+    def execute(self, app: StateMachineReplica) -> Tuple[Tuple[Aggregate, ...], Any]:
         kv_aggregate, index = self.resolve_key_name(app, self.key_name)
         kv_aggregate.set_field_value(self.field_name, self.field_value)
-        return kv_aggregate, index
+        return (kv_aggregate, index), 1
 
 
 class HSETNXCommand(HashCommand):
@@ -39,11 +39,14 @@ class HSETNXCommand(HashCommand):
     def field_value(self) -> str:
         return self.cmd[3]
 
-    def execute(self, app: StateMachineReplica) -> Tuple[Aggregate, ...]:
+    def execute(self, app: StateMachineReplica) -> Tuple[Tuple[Aggregate, ...], Any]:
         kv_aggregate, index = self.resolve_key_name(app, self.key_name)
         if self.field_name not in kv_aggregate.hash:
             kv_aggregate.set_field_value(self.field_name, self.field_value)
-        return kv_aggregate, index
+            result = 1
+        else:
+            result = 0
+        return (kv_aggregate, index), result
 
 
 class HINCRBYCommand(HashCommand):
@@ -55,16 +58,14 @@ class HINCRBYCommand(HashCommand):
     def incr_by(self) -> Decimal:
         return Decimal(self.cmd[3])
 
-    def execute(self, app: StateMachineReplica) -> Tuple[Aggregate, ...]:
+    def execute(self, app: StateMachineReplica) -> Tuple[Tuple[Aggregate, ...], Any]:
         kv_aggregate, index = self.resolve_key_name(app, self.key_name)
+        field_value = self.incr_by + Decimal(kv_aggregate.get_field_value(self.field_name) or 0)
         kv_aggregate.set_field_value(
             self.field_name,
-            str(
-                self.incr_by
-                + Decimal(kv_aggregate.get_field_value(self.field_name) or 0)
-            ),
+            str(field_value),
         )
-        return kv_aggregate, index
+        return (kv_aggregate, index), field_value
 
 
 class HDELCommand(HashCommand):
@@ -72,14 +73,15 @@ class HDELCommand(HashCommand):
     def field_name(self) -> str:
         return self.cmd[2]
 
-    def execute(self, app: StateMachineReplica) -> Tuple[Aggregate, ...]:
+    def execute(self, app: StateMachineReplica) -> Tuple[Tuple[Aggregate, ...], Any]:
         kv_aggregate, index = self.resolve_key_name(app, self.key_name)
-        if kv_aggregate is not None:
-            try:
-                kv_aggregate.del_field_value(self.field_name)
-            except KeyError:
-                pass
-        return (kv_aggregate,)
+        try:
+            kv_aggregate.del_field_value(self.field_name)
+        except KeyError:
+            result = 0
+        else:
+            result = 1
+        return (kv_aggregate,), result
 
 
 class HGETCommand(HashCommand):

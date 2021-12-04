@@ -24,7 +24,7 @@ from paxossystem.transcodings import (
 
 
 class PaxosApplication(CachingApplication[Aggregate], ProcessApplication[Aggregate]):
-    quorum_size: int = 0
+    num_participants: int = 1
     follow_topics = [
         get_topic(PaxosAggregate.MessageAnnounced),
     ]
@@ -57,11 +57,12 @@ class PaxosApplication(CachingApplication[Aggregate], ProcessApplication[Aggrega
         return paxos_aggregate  # in case it's new
 
     def start_paxos(self, key, value, assume_leader):
-        assert self.quorum_size > 0
+        assert self.num_participants > 1
         assert isinstance(key, UUID)
+        quorum_size = 1 + self.num_participants // 2
         paxos_aggregate = PaxosAggregate.start(
             originator_id=key,
-            quorum_size=self.quorum_size,
+            quorum_size=quorum_size,
             network_uid=self.name,
             announce_resolution=self.announce_resolutions,
         )
@@ -90,9 +91,10 @@ class PaxosApplication(CachingApplication[Aggregate], ProcessApplication[Aggrega
         try:
             paxos_aggregate = self.repository.get(domain_event.originator_id)
         except AggregateNotFound:
+            quorum_size = 1 + self.num_participants // 2
             paxos_aggregate = PaxosAggregate.start(
                 originator_id=domain_event.originator_id,
-                quorum_size=self.quorum_size,
+                quorum_size=quorum_size,
                 network_uid=self.name,
                 announce_resolution=self.announce_resolutions,
             )

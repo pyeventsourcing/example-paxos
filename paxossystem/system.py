@@ -10,12 +10,11 @@ class PaxosSystem(System):
     def __init__(self, app_class: Type[PaxosApplication], num_participants: int):
         self.app_class = app_class
         self.num_participants = num_participants
-        self.quorum_size = 1 + num_participants // 2
         classes = [
             type(
                 f"{self.app_class.__name__}{i}",
                 (self.app_class,),
-                {"quorum_size": self.quorum_size},
+                {"num_participants": self.num_participants},
             )
             for i in range(num_participants)
         ]

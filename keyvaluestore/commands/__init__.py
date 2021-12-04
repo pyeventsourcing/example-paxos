@@ -25,7 +25,7 @@ class KeyValueStoreCommand(Command):
     def do_query(self, app: StateMachineReplica) -> Any:
         pass
 
-    def execute(self, app: StateMachineReplica) -> Tuple[Aggregate, ...]:
+    def execute(self, app: StateMachineReplica) -> Tuple[Tuple[Aggregate, ...], Any]:
         pass
 
     def resolve_key_name(
@@ -69,7 +69,7 @@ class RENAMECommand(KeyValueStoreCommand):
     def new_key_name(self) -> str:
         return self.cmd[2]
 
-    def execute(self, app: StateMachineReplica) -> Tuple[Aggregate, ...]:
+    def execute(self, app: StateMachineReplica) -> Tuple[Tuple[Aggregate, ...], Any]:
         kv_aggregate, index = self.resolve_key_name(app, self.key_name)
         if kv_aggregate is not None:
             old_index = self.get_kv_index(app, self.key_name)
@@ -79,7 +79,7 @@ class RENAMECommand(KeyValueStoreCommand):
                 new_index = KeyNameIndex(self.new_key_name, kv_aggregate.id)
             new_index.update_ref(kv_aggregate.id)
             kv_aggregate.rename(self.new_key_name)
-            return kv_aggregate, old_index, new_index
+            return (kv_aggregate, old_index, new_index), "OK"
 
 
 def split(text: str) -> List[str]:
