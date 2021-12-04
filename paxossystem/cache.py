@@ -174,10 +174,15 @@ class CachingApplication(Application[TAggregate]):
     AGGREGATE_CACHE_FASTFORWARD = "AGGREGATE_CACHE_FASTFORWARD"
 
     def construct_repository(self) -> CachedRepository[TAggregate]:
+        cache_maxsize_envvar = self.env.get(self.AGGREGATE_CACHE_MAXSIZE)
+        if cache_maxsize_envvar:
+            cache_maxsize = int(cache_maxsize_envvar)
+        else:
+            cache_maxsize = None
         return CachedRepository(
             event_store=self.events,
             snapshot_store=self.snapshots,
-            cache_maxsize=self.env.get(self.AGGREGATE_CACHE_MAXSIZE),
+            cache_maxsize=cache_maxsize,
             fastforward=strtobool(self.env.get(self.AGGREGATE_CACHE_FASTFORWARD, "y")),
         )
 

@@ -4,7 +4,12 @@ from uuid import UUID
 
 from eventsourcing.domain import Aggregate, event
 
-from paxossystem.composable import ProposalStatus, PaxosInstance, PaxosMessage, Resolution
+from paxossystem.composable import (
+    ProposalStatus,
+    PaxosInstance,
+    PaxosMessage,
+    Resolution,
+)
 
 
 class PaxosAggregate(Aggregate):
@@ -14,7 +19,11 @@ class PaxosAggregate(Aggregate):
 
     @classmethod
     def start(
-        cls, originator_id: UUID, quorum_size: int, network_uid: str
+        cls,
+        originator_id: UUID,
+        quorum_size: int,
+        network_uid: str,
+        announce_resolution: bool,
     ) -> "PaxosAggregate":
         """
         Factory method that returns a new Paxos aggregate.
@@ -25,6 +34,7 @@ class PaxosAggregate(Aggregate):
             id=originator_id,
             quorum_size=quorum_size,
             network_uid=network_uid,
+            announce_resolution=announce_resolution
         )
 
     class Started(Aggregate.Created["PaxosAggregate"]):
@@ -34,8 +44,15 @@ class PaxosAggregate(Aggregate):
 
         quorum_size: int
         network_uid: str
+        announce_resolution: bool
 
-    def __init__(self, quorum_size: int, network_uid: str, **kwargs: Any):
+    def __init__(
+        self,
+        quorum_size: int,
+        network_uid: str,
+        announce_resolution: bool,
+        **kwargs: Any
+    ):
         assert isinstance(quorum_size, int)
         self.quorum_size = quorum_size
         self.network_uid = network_uid
@@ -45,6 +62,7 @@ class PaxosAggregate(Aggregate):
         self.proposals: Dict[str, ProposalStatus] = {}
         self.acceptors: Dict[str, str] = {}
         self.final_value: Any = None
+        self.announce_resolution = announce_resolution
         super(PaxosAggregate, self).__init__(**kwargs)
 
     def propose_value(self, value: Any, assume_leader: bool = False) -> PaxosMessage:
@@ -66,16 +84,13 @@ class PaxosAggregate(Aggregate):
         Responds to messages from other participants.
         """
         resolution_msg = None
-        # Todo: Make it optional not to announce resolution
-        #  (without which it's hard to see final value).
-        do_announce_resolution = False
         if not isinstance(msg, Resolution):
             paxos = self.paxos_instance
             while msg:
                 msg = paxos.receive(msg)
                 if msg:
                     if isinstance(msg, Resolution):
-                        if do_announce_resolution:
+                        if self.announce_resolution:
                             self.announce(msg)
                         resolution_msg = msg
                         msg = None
@@ -95,6 +110,7 @@ class PaxosAggregate(Aggregate):
         """
         Published when a Paxos message is announced.
         """
+
         msg: PaxosMessage
 
     def setattrs_from_paxos(self, paxos: PaxosInstance) -> None:

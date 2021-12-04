@@ -8,5 +8,5 @@ class KeyValueStore(StateMachineReplica):
         KeyNameIndex: 100,
     }
     env = {
-        StateMachineReplica.COMMAND_CLASS: "keyvaluestore.commands:KeyValueStoreCommand",
+        "COMMAND_CLASS": "keyvaluestore.commands:KeyValueStoreCommand",
     }

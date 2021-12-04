@@ -28,6 +28,7 @@ class PaxosApplication(CachingApplication[Aggregate], ProcessApplication[Aggrega
     follow_topics = [
         get_topic(PaxosAggregate.MessageAnnounced),
     ]
+    announce_resolutions = False
 
     @property
     def name(self):
@@ -59,7 +60,10 @@ class PaxosApplication(CachingApplication[Aggregate], ProcessApplication[Aggrega
         assert self.quorum_size > 0
         assert isinstance(key, UUID)
         paxos_aggregate = PaxosAggregate.start(
-            originator_id=key, quorum_size=self.quorum_size, network_uid=self.name
+            originator_id=key,
+            quorum_size=self.quorum_size,
+            network_uid=self.name,
+            announce_resolution=self.announce_resolutions,
         )
         msg = paxos_aggregate.propose_value(value, assume_leader=assume_leader)
         paxos_aggregate.receive_message(msg)
@@ -90,6 +94,7 @@ class PaxosApplication(CachingApplication[Aggregate], ProcessApplication[Aggrega
                 originator_id=domain_event.originator_id,
                 quorum_size=self.quorum_size,
                 network_uid=self.name,
+                announce_resolution=self.announce_resolutions,
             )
         # Absolutely make sure the participant aggregates aren't getting confused.
         assert (

@@ -86,7 +86,9 @@ class StateMachineReplica(PaxosApplication):
             # Todo: Think about passing the round number with the proposed value.
             if len(paxos_aggregate.pending_events) == paxos_aggregate.version:
                 paxos_logged = self.paxos_log.trigger_event(self.next_paxos_round)
-                paxos_id = self.create_paxos_aggregate_id_from_round(paxos_logged.originator_version)
+                paxos_id = self.create_paxos_aggregate_id_from_round(
+                    paxos_logged.originator_version
+                )
                 if paxos_id != paxos_aggregate.id:
                     raise Exception("Out of order paxoses :-(")
                 process_event.save(paxos_logged)
