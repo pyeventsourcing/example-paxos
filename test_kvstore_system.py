@@ -96,6 +96,10 @@ class TestWithPostgreSQL(KeyValueSystemTestCase):
 
 
 class TestSystemSingleThreaded(KeyValueSystemTestCase):
+    @retry(AssertionError, max_attempts=10, wait=0.05)
+    def assert_execute(self, app, cmd, value):
+        self.assertEqual(app.propose_command(cmd).result(), value)
+
     def test_propose_command_execute_query(self):
 
         apps = [self.get_app(f"KeyValueStore{i}") for i in range(self.num_participants)]
@@ -103,37 +107,33 @@ class TestSystemSingleThreaded(KeyValueSystemTestCase):
 
         # Check each process has expected initial value.
         for app in apps:
-            self.assertEqual(app.execute_query("HGET myhash field"), None)
+            self.assert_execute(app, "HGET myhash field", None)
 
         # Set a value.
         app0.propose_command('HSET myhash field "Hello"').result()
 
-        @retry(AssertionError, max_attempts=10, wait=0.05)
-        def assert_execute_query(cmd, value):
-            self.assertEqual(app.execute_query(cmd), value)
-
         # Check each process has expected final value.
         for app in apps:
-            assert_execute_query("HGET myhash field", "Hello")
+            self.assert_execute(app, "HGET myhash field", "Hello")
 
         # Update the value.
         app0.propose_command('HSET myhash field "Helloooo"').result()
 
         # Check each process has expected final value.
         for app in apps:
-            assert_execute_query("HGET myhash field", "Helloooo")
+            self.assert_execute(app, "HGET myhash field", "Helloooo")
 
         # Delete the value.
         app0.propose_command("HDEL myhash field").result()
 
         for app in apps:
-            assert_execute_query("HGET myhash field", None)
+            self.assert_execute(app, "HGET myhash field", None)
 
         # Set a value in a different hash.
         app0.propose_command('HSET myhash2 field "Goodbye"').result()
 
         for app in apps:
-            assert_execute_query("HGET myhash2 field", "Goodbye")
+            self.assert_execute(app, "HGET myhash2 field", "Goodbye")
 
 
 class TestSystemSingleThreadedWithSQLite(TestWithSQLite, TestSystemSingleThreaded):
@@ -278,7 +278,7 @@ class TestPerformanceMultiThreaded(KeyValueSystemTestCase):
                 # app = apps[i % self.num_participants]
                 # app = random.choice(apps)
                 app = apps[0]
-                app.assume_leader = False
+                app.assume_leader = True
                 now = time()
                 started_times.append(now)
                 future = app.propose_command(

@@ -11,11 +11,7 @@ from keyvaluestore.domainmodel import (
 )
 
 
-class HashCommand(KeyValueStoreCommand):
-    pass
-
-
-class HSETCommand(HashCommand):
+class HSETCommand(KeyValueStoreCommand):
     @property
     def field_name(self) -> str:
         return self.cmd[2]
@@ -30,7 +26,7 @@ class HSETCommand(HashCommand):
         return (kv_aggregate, index), 1
 
 
-class HSETNXCommand(HashCommand):
+class HSETNXCommand(KeyValueStoreCommand):
     @property
     def field_name(self) -> str:
         return self.cmd[2]
@@ -49,7 +45,7 @@ class HSETNXCommand(HashCommand):
         return (kv_aggregate, index), result
 
 
-class HINCRBYCommand(HashCommand):
+class HINCRBYCommand(KeyValueStoreCommand):
     @property
     def field_name(self) -> str:
         return self.cmd[2]
@@ -68,7 +64,7 @@ class HINCRBYCommand(HashCommand):
         return (kv_aggregate, index), field_value
 
 
-class HDELCommand(HashCommand):
+class HDELCommand(KeyValueStoreCommand):
     @property
     def field_name(self) -> str:
         return self.cmd[2]
@@ -84,23 +80,23 @@ class HDELCommand(HashCommand):
         return (kv_aggregate,), result
 
 
-class HGETCommand(HashCommand):
+class HGETCommand(KeyValueStoreCommand):
+    mutates_state = False
+
     @property
     def field_name(self) -> str:
         return self.cmd[2]
 
-    def do_query(self, app: StateMachineReplica) -> Any:
+    def execute(self, app: StateMachineReplica) -> Tuple[Tuple[Aggregate, ...], Any]:
         index_id = KeyNameIndex.create_id(self.key_name)
+        result = None
         try:
-            index = app.repository.get(
-                index_id,
-            )
+            index = app.repository.get(index_id)
         except AggregateNotFound:
-            return None
-        if index.ref:
+            pass
+        else:
             aggregate_id = index.ref
             aggregate = self.get_kv_aggregate(app, aggregate_id)
             if aggregate:
-                return aggregate.get_field_value(self.field_name)
-        else:
-            return None
+                result = aggregate.get_field_value(self.field_name)
+        return (), result

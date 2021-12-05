@@ -22,9 +22,6 @@ class KeyValueStoreCommand(Command):
     def key_name(self) -> str:
         return self.cmd[1]
 
-    def do_query(self, app: StateMachineReplica) -> Any:
-        pass
-
     def execute(self, app: StateMachineReplica) -> Tuple[Tuple[Aggregate, ...], Any]:
         pass
 

@@ -1,6 +1,5 @@
 from abc import ABC, abstractmethod
 from concurrent.futures import Future
-from queue import Queue
 from time import time
 from typing import (
     Any,
@@ -10,6 +9,7 @@ from typing import (
     Optional,
     Tuple,
     Type,
+    TypeVar,
 )
 from uuid import NAMESPACE_URL, UUID, uuid5
 
@@ -26,12 +26,20 @@ from paxossystem.application import PaxosApplication
 from paxossystem.domainmodel import PaxosAggregate
 
 
-class CommandFuture(Future):
+class CommandFuture(Future[Any]):
     def __init__(self, cmd_text: str):
         super(CommandFuture, self).__init__()
         self.original_cmd_text = cmd_text
         self.started: float = time()
         self.finished: Optional[float] = None
+
+    def set_exception(self, exception: Optional[BaseException]) -> None:
+        self.finished = time()
+        super().set_exception(exception)
+
+    def set_result(self, result: Any) -> None:
+        self.finished = time()
+        super().set_result(result)
 
 
 class StateMachineReplica(PaxosApplication):
@@ -57,8 +65,9 @@ class StateMachineReplica(PaxosApplication):
         self.next_paxos_round: Optional[int] = None
 
     def propose_command(self, cmd_text: str) -> CommandFuture:
+        cmd = self.command_class.parse(cmd_text)
         future = CommandFuture(cmd_text=cmd_text)
-        if self.num_participants > 1:
+        if cmd.mutates_state and self.num_participants > 1:
             paxos_logged = self.paxos_log.trigger_event(self.next_paxos_round)
             proposal_key = self.create_paxos_aggregate_id_from_round(
                 paxos_logged.originator_version
@@ -73,9 +82,12 @@ class StateMachineReplica(PaxosApplication):
             else:
                 self.next_paxos_round = paxos_logged.originator_version + 1
         else:
-            result = self.execute_proposal(cmd_text)
-            future.finished = time()
-            future.set_result(result)
+            try:
+                result = self.execute_proposal(cmd_text)
+            except Exception as e:
+                future.set_exception(e)
+            else:
+                future.set_result(result)
         return future
 
     def create_paxos_aggregate_id_from_round(self, round: int) -> UUID:
@@ -120,7 +132,6 @@ class StateMachineReplica(PaxosApplication):
                         future.set_exception(exception=e)
                 else:
                     if future:
-                        future.finished = time()
                         if future.original_cmd_text != paxos_aggregate.final_value:
                             future.set_exception(
                                 CommandRejected(
@@ -139,10 +150,6 @@ class StateMachineReplica(PaxosApplication):
         self.save(*aggregates)
         return result
 
-    def execute_query(self, cmd_text: str):
-        cmd = self.command_class.parse(cmd_text)
-        return cmd.do_query(self)
-
     def notify(self, new_events: List[AggregateEvent[Aggregate]]) -> None:
         """
         Extends the application :func:`~eventsourcing.application.Application.notify`
@@ -156,6 +163,8 @@ class StateMachineReplica(PaxosApplication):
 
 
 class Command(ABC):
+    mutates_state = True
+
     @classmethod
     @abstractmethod
     def parse(cls, cmd_text: str) -> "Command":
@@ -163,8 +172,4 @@ class Command(ABC):
 
     @abstractmethod
     def execute(self, app: StateMachineReplica) -> Tuple[Tuple[Aggregate, ...], Any]:
-        pass
-
-    @abstractmethod
-    def do_query(self, app: StateMachineReplica) -> Any:
         pass
