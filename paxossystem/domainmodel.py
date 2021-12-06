@@ -2,7 +2,7 @@ from copy import deepcopy
 from typing import Any, Set, Dict
 from uuid import UUID
 
-from eventsourcing.domain import Aggregate, event
+from eventsourcing.domain import Aggregate
 
 from paxossystem.composable import (
     ProposalStatus,

@@ -34,10 +34,6 @@ class PaxosApplication(CachingApplication[Aggregate], ProcessApplication[Aggrega
         self.assume_leader = False
         self.announce_resolutions = False
 
-    @property
-    def name(self):
-        return self.__class__.__name__
-
     def register_transcodings(self, transcoder: Transcoder) -> None:
         super().register_transcodings(transcoder)
         transcoder.register(ProposalIDAsDict())

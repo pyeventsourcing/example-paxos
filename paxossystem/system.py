@@ -12,7 +12,7 @@ class PaxosSystem(System):
         num_participants = num_participants
         classes = [
             cast(Type[PaxosApplication], type(
-                f"{self.app_class.__name__}{i}",
+                f"{self.app_class.name}{i}",
                 (self.app_class,),
                 {"num_participants": num_participants},
             ))
