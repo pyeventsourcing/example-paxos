@@ -55,6 +55,7 @@ class StateMachineReplica(PaxosApplication):
     pull_section_size = 100
     log_section_size = 100
     futures_cache_maxsize = 1000
+    log_read_commands = True
 
     def __init__(self, env: Optional[Mapping[str, str]] = None) -> None:
         super().__init__(env)
@@ -77,7 +78,7 @@ class StateMachineReplica(PaxosApplication):
     def propose_command(self, cmd_text: str) -> CommandFuture:
         cmd = self.command_class.parse(cmd_text)
         future = CommandFuture(cmd_text=cmd_text)
-        if cmd.mutates_state and self.num_participants > 1:
+        if (self.log_read_commands or cmd.mutates_state) and self.num_participants > 1:
 
             # Start a paxos round.
             paxos_logged = self.paxos_log.trigger_event()
@@ -119,7 +120,8 @@ class StateMachineReplica(PaxosApplication):
         else:
             # Just execute the command immediately.
             try:
-                aggregates, result = self.execute_proposal(cmd_text)
+                cmd = self.command_class.parse(cmd_text)
+                aggregates, result = cmd.execute(self)
                 self.save(*aggregates)
             except Exception as e:
                 future.set_exception(CommandErrored(e))
@@ -187,7 +189,12 @@ class StateMachineReplica(PaxosApplication):
                     future = None
                 try:
                     print(self.name, "executing", paxos_aggregate.final_value)
-                    aggregates, result = self.execute_proposal(paxos_aggregate.final_value)
+                    cmd = self.command_class.parse(paxos_aggregate.final_value)
+                    if cmd.mutates_state or future:
+                        aggregates, result = cmd.execute(self)
+                    else:
+                        _print("Skipped executing read command because has no future")
+                        aggregates, result = (), None
                 except Exception as e:
                     aggregates = ()
                     if future:
@@ -218,10 +225,6 @@ class StateMachineReplica(PaxosApplication):
             process_event.save(paxos_aggregate)
             process_event.save(paxos_logged)
             process_event.save(*aggregates)
-
-    def execute_proposal(self, cmd_text: str) -> Tuple[Tuple[Aggregate, ...], Any]:
-        cmd = self.command_class.parse(cmd_text)
-        return cmd.execute(self)
 
     def record(self, process_event: ProcessEvent) -> Optional[int]:
         new_events = list(process_event.events)

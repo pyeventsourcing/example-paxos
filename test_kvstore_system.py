@@ -1,6 +1,6 @@
 import sys
 from concurrent.futures import TimeoutError
-from queue import Queue
+from queue import Empty, Queue
 from threading import Thread
 from time import sleep, time
 from typing import Dict, Type, cast
@@ -66,7 +66,7 @@ class TestWithSQLite(KeyValueSystemTestCase):
         super().setUp()
 
     def create_runner(self, env: Dict):
-        app_name = KeyValueReplica.__name__.upper()
+        app_name = KeyValueReplica.name.upper()
         for i in range(self.num_participants):
             env[f"{app_name}{i}_SQLITE_DBNAME"] = next(self.temp_files)
             # env[f"{app_name}{i}_SQLITE_DBNAME"] = f"file:application{i}?mode=memory&cache=shared"
@@ -92,7 +92,7 @@ class TestWithPostgreSQL(KeyValueSystemTestCase):
             "eventsourcing",
             "eventsourcing",
         )
-        app_name = KeyValueReplica.__name__.lower()
+        app_name = KeyValueReplica.name.lower()
         for i in range(self.num_participants):
             drop_postgres_table(datastore, f"{app_name}{i}_events")
             drop_postgres_table(datastore, f"{app_name}{i}_snapshots")
@@ -173,7 +173,7 @@ class TestPerformanceSingleThreaded(KeyValueSystemTestCase):
     def test_performance(self):
         print(type(self))
         apps = [
-            self.get_app(f"KeyValueReplica{i}") for i in range(self.num_participants)
+            self.get_app(f"{KeyValueReplica.name}{i}") for i in range(self.num_participants)
         ]
 
         period = self.period
@@ -273,6 +273,7 @@ class TestPerformanceMultiThreaded(KeyValueSystemTestCase):
     target_rate = 50
 
     def test_performance(self):
+        eventsourcing.utils._topic_cache.clear()
         print(type(self))
         apps = [
             self.get_app(f"{KeyValueReplica.__name__}{i}")
