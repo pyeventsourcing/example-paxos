@@ -22,8 +22,11 @@ class Cache(Generic[S, T]):
     def __init__(self):
         self.cache: Dict[S, T] = {}
 
-    def get(self, key: S) -> T:
-        return self.cache[key]
+    def get(self, key: S, evict=False) -> T:
+        if evict:
+            return self.cache.pop(key)
+        else:
+            return self.cache[key]
 
     def put(self, key: S, value: T) -> Optional[T]:
         if value is not None:
@@ -60,18 +63,26 @@ class LRUCache(Cache[S, T]):
             None,
         ]  # initialize by pointing to self
 
-    def get(self, key: S) -> T:
+    def get(self, key: S, evict=False) -> T:
         with self.lock:
             link = self.cache.get(key)
             if link is not None:
-                # Move the link to the front of the circular queue.
                 link_prev, link_next, _key, result = link
-                link_prev[self.NEXT] = link_next
-                link_next[self.PREV] = link_prev
-                last = self.root[self.PREV]
-                last[self.NEXT] = self.root[self.PREV] = link
-                link[self.PREV] = last
-                link[self.NEXT] = self.root
+                if not evict:
+                    # Move the link to the front of the circular queue.
+                    link_prev[self.NEXT] = link_next
+                    link_next[self.PREV] = link_prev
+                    last = self.root[self.PREV]
+                    last[self.NEXT] = self.root[self.PREV] = link
+                    link[self.PREV] = last
+                    link[self.NEXT] = self.root
+                else:
+                    # Remove the link.
+                    link_prev[self.NEXT] = link_next
+                    link_next[self.PREV] = link_prev
+                    del self.cache[key]
+                    self.full = self.cache.__len__() >= self.maxsize
+
                 return result
             else:
                 raise KeyError
