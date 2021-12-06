@@ -14,27 +14,27 @@ from eventsourcing.domain import AggregateEvent, Snapshot, TAggregate
 from eventsourcing.persistence import EventStore
 from eventsourcing.utils import strtobool
 
-S = TypeVar("S")
-T = TypeVar("T")
+_S = TypeVar("_S")
+_T = TypeVar("_T")
 
 
-class Cache(Generic[S, T]):
+class Cache(Generic[_S, _T]):
     def __init__(self):
-        self.cache: Dict[S, T] = {}
+        self.cache: Dict[_S, _T] = {}
 
-    def get(self, key: S, evict=False) -> T:
+    def get(self, key: _S, evict=False) -> _T:
         if evict:
             return self.cache.pop(key)
         else:
             return self.cache[key]
 
-    def put(self, key: S, value: T) -> Optional[T]:
+    def put(self, key: _S, value: _T) -> Optional[_T]:
         if value is not None:
             self.cache[key] = value
         return None
 
 
-class LRUCache(Cache[S, T]):
+class LRUCache(Cache[_S, _T]):
     """
     Size limited caching that tracks accesses by recency.
 
@@ -63,7 +63,7 @@ class LRUCache(Cache[S, T]):
             None,
         ]  # initialize by pointing to self
 
-    def get(self, key: S, evict=False) -> T:
+    def get(self, key: _S, evict=False) -> _T:
         with self.lock:
             link = self.cache.get(key)
             if link is not None:
@@ -87,7 +87,7 @@ class LRUCache(Cache[S, T]):
             else:
                 raise KeyError
 
-    def put(self, key: S, value: T) -> Optional[Any]:
+    def put(self, key: _S, value: _T) -> Optional[Any]:
         evicted_value = None
         with self.lock:
             link = self.cache.get(key)
