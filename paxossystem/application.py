@@ -32,7 +32,7 @@ class PaxosApplication(CachingApplication[Aggregate], ProcessApplication[Aggrega
     def __init__(self, env: Optional[Mapping[str, str]] = None) -> None:
         super().__init__(env)
         self.assume_leader = False
-        self.announce_resolutions = True
+        self.announce_resolutions = False
 
     @property
     def name(self):

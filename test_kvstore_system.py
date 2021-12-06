@@ -281,7 +281,7 @@ class TestPerformanceMultiThreaded(KeyValueSystemTestCase):
 
         period = self.target_rate
         interval = 0.999 / period
-        n = period * 100
+        n = period * 10
 
         started_times = []
         finished_times = []
