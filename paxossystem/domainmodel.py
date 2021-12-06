@@ -84,19 +84,18 @@ class PaxosAggregate(Aggregate):
         Responds to messages from other participants.
         """
         resolution_msg = None
-        if not isinstance(msg, Resolution):
-            paxos = self.paxos_instance
-            while msg:
-                msg = paxos.receive(msg)
-                if msg:
-                    if isinstance(msg, Resolution):
-                        if self.announce_resolution:
-                            self.announce(msg)
-                        resolution_msg = msg
-                        msg = None
-                    else:
+        paxos = self.paxos_instance
+        while msg:
+            msg = paxos.receive(msg)
+            if msg:
+                if isinstance(msg, Resolution):
+                    if self.announce_resolution:
                         self.announce(msg)
-            self.setattrs_from_paxos(paxos)
+                    resolution_msg = msg
+                    msg = None
+                else:
+                    self.announce(msg)
+        self.setattrs_from_paxos(paxos)
 
         return resolution_msg
 

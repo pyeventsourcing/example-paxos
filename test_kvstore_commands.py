@@ -1,12 +1,12 @@
 from decimal import Decimal
 from unittest import TestCase
 
-from keyvaluestore.application import KeyValueStore
+from keyvaluestore.application import KeyValueReplica
 from keyvaluestore.commands import split
 
 
 class AppTestCase(TestCase):
-    app: KeyValueStore
+    app: KeyValueReplica
 
     def assert_execute(self, cmd_text, expected_value):
         self.assertEqual(self.app.propose_command(cmd_text).result(), expected_value)
@@ -14,9 +14,9 @@ class AppTestCase(TestCase):
 
 class TestHashCommands(AppTestCase):
     def setUp(self) -> None:
-        self.app = KeyValueStore(
+        self.app = KeyValueReplica(
             env={
-                "COMMAND_CLASS": "keyvaluestore.commands:KeyValueStoreCommand",
+                "COMMAND_CLASS": "keyvaluestore.commands:KeyValueCommand",
             }
         )
 

@@ -293,9 +293,14 @@ class Proposer(MessageHandler):
 
             self.promises_received.add(msg.from_uid)
 
+            # NB, added 'msg.last_accepted_id and ' to conditional expression,
+            # because of a TypeError when self.highest_accepted_id is not None
+            # whilst msg.last_accepted_id is None. Not entirely sure if this is
+            # okay, but the error crops up after receiving enough Nacks that
+            # prepare() is called and then we receive our own Promise.
             if (
                 self.highest_accepted_id is None
-                or msg.last_accepted_id > self.highest_accepted_id
+                or msg.last_accepted_id and msg.last_accepted_id > self.highest_accepted_id
             ):
                 self.highest_accepted_id = msg.last_accepted_id
                 if msg.last_accepted_value is not None:
@@ -476,3 +481,10 @@ class PaxosInstance(Proposer, Acceptor, Learner):
     def receive_accept(self, msg):
         self.observe_proposal(msg.proposal_id)
         return super(PaxosInstance, self).receive_accept(msg)
+
+    def receive_resolution(self, msg: Resolution):
+        if self.final_value is None:
+            self.final_value = msg.value
+            self.proposals = None
+            self.acceptors = None
+            return Resolution(self.network_uid, self.final_value)

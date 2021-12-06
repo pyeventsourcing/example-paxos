@@ -8,9 +8,9 @@ from replicatedstatemachine.application import Command, StateMachineReplica
 from keyvaluestore.domainmodel import KeyValueAggregate, KeyNameIndex
 
 
-class KeyValueStoreCommand(Command):
+class KeyValueCommand(Command):
     @classmethod
-    def parse(cls, cmd_text: str) -> "KeyValueStoreCommand":
+    def parse(cls, cmd_text: str) -> "KeyValueCommand":
         cmd = split(cmd_text)
         command_class = globals()[cmd[0].upper() + "Command"]
         return command_class(cmd)
@@ -61,7 +61,7 @@ class KeyValueStoreCommand(Command):
         return aggregate
 
 
-class RENAMECommand(KeyValueStoreCommand):
+class RENAMECommand(KeyValueCommand):
     @property
     def new_key_name(self) -> str:
         return self.cmd[2]

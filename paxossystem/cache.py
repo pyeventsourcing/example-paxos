@@ -1,6 +1,6 @@
 from copy import deepcopy
 from threading import RLock
-from typing import Dict, Generic, Optional, TypeVar
+from typing import Any, Dict, Generic, Optional, TypeVar
 from uuid import UUID
 
 from eventsourcing.application import (
@@ -25,9 +25,10 @@ class Cache(Generic[S, T]):
     def get(self, key: S) -> T:
         return self.cache[key]
 
-    def put(self, key: S, value: T) -> None:
+    def put(self, key: S, value: T) -> Optional[T]:
         if value is not None:
             self.cache[key] = value
+        return None
 
 
 class LRUCache(Cache[S, T]):
@@ -75,7 +76,8 @@ class LRUCache(Cache[S, T]):
             else:
                 raise KeyError
 
-    def put(self, key: S, value: T) -> None:
+    def put(self, key: S, value: T) -> Optional[Any]:
+        evicted_value = None
         with self.lock:
             link = self.cache.get(key)
             if link is not None:
@@ -102,7 +104,7 @@ class LRUCache(Cache[S, T]):
                 # still adjusting the links.
                 self.root = oldroot[self.NEXT]
                 oldkey = self.root[self.KEY]
-                _ = self.root[self.RESULT]
+                evicted_value = self.root[self.RESULT]
                 self.root[self.KEY] = self.root[self.RESULT] = None
                 # Now update the cache dictionary.
                 del self.cache[oldkey]
@@ -118,6 +120,7 @@ class LRUCache(Cache[S, T]):
                 # Use the __len__() bound method instead of the len() function
                 # which could potentially be wrapped in an lru_cache itself.
                 self.full = self.cache.__len__() >= self.maxsize
+        return evicted_value
 
 
 class CachedRepository(Repository[TAggregate]):

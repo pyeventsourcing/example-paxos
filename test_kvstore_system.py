@@ -6,15 +6,17 @@ from time import sleep, time
 from typing import Dict, Type, cast
 from unittest import TestCase
 
-from eventsourcing.persistence import InfrastructureFactory
+import eventsourcing.utils
 from eventsourcing.postgres import PostgresDatastore
 from eventsourcing.system import MultiThreadedRunner, Runner, SingleThreadedRunner
 from eventsourcing.tests.ramdisk import tmpfile_uris
 from eventsourcing.utils import retry
 
-from keyvaluestore.application import KeyValueStore
+from keyvaluestore.application import KeyValueReplica
+from paxossystem.domainmodel import PaxosAggregate
 from replicatedstatemachine.application import CommandFuture, StateMachineReplica
 from paxossystem.system import PaxosSystem
+from replicatedstatemachine.exceptions import CommandFutureEvicted, CommandRejected
 from test_paxos_system import drop_postgres_table
 
 
@@ -24,12 +26,12 @@ class KeyValueSystemTestCase(TestCase):
     num_participants = 3
 
     def setUp(self):
-        self.system = PaxosSystem(KeyValueStore, self.num_participants)
+        self.system = PaxosSystem(KeyValueReplica, self.num_participants)
         self.runner = self.create_runner(
             {
-                InfrastructureFactory.PERSISTENCE_MODULE: self.persistence_module,
-                StateMachineReplica.AGGREGATE_CACHE_MAXSIZE: 500,
-                StateMachineReplica.AGGREGATE_CACHE_FASTFORWARD: "n",
+                "PERSISTENCE_MODULE": self.persistence_module,
+                "AGGREGATE_CACHE_MAXSIZE": 500,
+                "AGGREGATE_CACHE_FASTFORWARD": "n",
                 # "COMPRESSOR_TOPIC": "zlib"
             }
         )
@@ -40,6 +42,7 @@ class KeyValueSystemTestCase(TestCase):
 
     def tearDown(self):
         self.runner.stop()
+        eventsourcing.utils._topic_cache.clear()
 
     def get_app(self, name) -> StateMachineReplica:
         return cast(StateMachineReplica, self.runner.apps.get(name))
@@ -63,9 +66,10 @@ class TestWithSQLite(KeyValueSystemTestCase):
         super().setUp()
 
     def create_runner(self, env: Dict):
+        app_name = KeyValueReplica.__name__.upper()
         for i in range(self.num_participants):
-            env[f"KEYVALUESTORE{i}_SQLITE_DBNAME"] = next(self.temp_files)
-            # env[f"KEYVALUESTORE{i}_SQLITE_DBNAME"] = f"file:application{i}?mode=memory&cache=shared"
+            env[f"{app_name}{i}_SQLITE_DBNAME"] = next(self.temp_files)
+            # env[f"{app_name}{i}_SQLITE_DBNAME"] = f"file:application{i}?mode=memory&cache=shared"
         return super().create_runner(env)
 
 
@@ -88,52 +92,55 @@ class TestWithPostgreSQL(KeyValueSystemTestCase):
             "eventsourcing",
             "eventsourcing",
         )
+        app_name = KeyValueReplica.__name__.lower()
         for i in range(self.num_participants):
-            drop_postgres_table(datastore, f"keyvaluestore{i}_events")
-            drop_postgres_table(datastore, f"keyvaluestore{i}_snapshots")
-            drop_postgres_table(datastore, f"keyvaluestore{i}_tracking")
+            drop_postgres_table(datastore, f"{app_name}{i}_events")
+            drop_postgres_table(datastore, f"{app_name}{i}_snapshots")
+            drop_postgres_table(datastore, f"{app_name}{i}_tracking")
         super().setUp()
 
 
 class TestSystemSingleThreaded(KeyValueSystemTestCase):
-    @retry(AssertionError, max_attempts=10, wait=0.05)
-    def assert_execute(self, app, cmd, value):
+    @retry(AssertionError, max_attempts=100, wait=0.05)
+    def assert_result(self, app, cmd, value):
         self.assertEqual(app.propose_command(cmd).result(), value)
 
-    def test_propose_command_execute_query(self):
+    def test_propose_command(self):
 
-        apps = [self.get_app(f"KeyValueStore{i}") for i in range(self.num_participants)]
+        apps = [
+            self.get_app(f"{KeyValueReplica.__name__}{i}") for i in range(self.num_participants)
+        ]
         app0 = apps[0]
 
         # Check each process has expected initial value.
         for app in apps:
-            self.assert_execute(app, "HGET myhash field", None)
+            self.assert_result(app, "HGET myhash field", None)
 
         # Set a value.
         app0.propose_command('HSET myhash field "Hello"').result()
 
         # Check each process has expected final value.
         for app in apps:
-            self.assert_execute(app, "HGET myhash field", "Hello")
+            self.assert_result(app, "HGET myhash field", "Hello")
 
         # Update the value.
         app0.propose_command('HSET myhash field "Helloooo"').result()
 
         # Check each process has expected final value.
         for app in apps:
-            self.assert_execute(app, "HGET myhash field", "Helloooo")
+            self.assert_result(app, "HGET myhash field", "Helloooo")
 
         # Delete the value.
         app0.propose_command("HDEL myhash field").result()
 
         for app in apps:
-            self.assert_execute(app, "HGET myhash field", None)
+            self.assert_result(app, "HGET myhash field", None)
 
         # Set a value in a different hash.
         app0.propose_command('HSET myhash2 field "Goodbye"').result()
 
         for app in apps:
-            self.assert_execute(app, "HGET myhash2 field", "Goodbye")
+            self.assert_result(app, "HGET myhash2 field", "Goodbye")
 
 
 class TestSystemSingleThreadedWithSQLite(TestWithSQLite, TestSystemSingleThreaded):
@@ -165,7 +172,9 @@ class TestPerformanceSingleThreaded(KeyValueSystemTestCase):
 
     def test_performance(self):
         print(type(self))
-        apps = [self.get_app(f"KeyValueStore{i}") for i in range(self.num_participants)]
+        apps = [
+            self.get_app(f"KeyValueReplica{i}") for i in range(self.num_participants)
+        ]
 
         period = self.period
         n = period * 10
@@ -179,12 +188,17 @@ class TestPerformanceSingleThreaded(KeyValueSystemTestCase):
             # app = apps[i % self.num_participants]
             # app = random.choice(apps)
             app = apps[0]
-            app.assume_leader = False
+            app.assume_leader = True
             now = time()
             started_times.append(now)
             cmd_text = f'HSET myhash{i} field "Hello{i}"'
             future = app.propose_command(cmd_text)
-            future.result()
+            try:
+                future.result(timeout=1)
+            except TimeoutError:
+                raise Exception(
+                    f"Command future timed out for '{future.original_cmd_text}'"
+                )
             i_started: float = future.started
             i_finished: float = future.finished
             timings.append((i_started, i_finished))
@@ -256,15 +270,18 @@ class TestPerformanceSingleThreadedWithPostgreSQL(
 
 class TestPerformanceMultiThreaded(KeyValueSystemTestCase):
     runner_class = MultiThreadedRunner
-    target_rate = 100
+    target_rate = 50
 
     def test_performance(self):
         print(type(self))
-        apps = [self.get_app(f"KeyValueStore{i}") for i in range(self.num_participants)]
+        apps = [
+            self.get_app(f"{KeyValueReplica.__name__}{i}")
+            for i in range(self.num_participants)
+        ]
 
         period = self.target_rate
-        interval = 1 / period
-        n = period * 10
+        interval = 0.999 / period
+        n = period * 100
 
         started_times = []
         finished_times = []
@@ -275,23 +292,18 @@ class TestPerformanceMultiThreaded(KeyValueSystemTestCase):
         def write():
             started = time()
             for i in list(range(n + 1)):
-                # app = apps[i % self.num_participants]
+                app = apps[i % self.num_participants]
                 # app = random.choice(apps)
-                app = apps[0]
-                app.assume_leader = True
+
+                # app = apps[0]
+                app.assume_leader = False
+
                 now = time()
                 started_times.append(now)
                 future = app.propose_command(
-                    f'HSET myhash field "Hello{i}"',
+                    f'HSET myhash{i} field "Hello{i} {app.name}"',
                 )
                 futures_queue.put(future)
-                # now = time()
-                # started_times.append(now)
-                # app.propose_command(
-                #     f'HSET myhash{i} field "Helloooo{i}"',
-                #     assume_leader=True,
-                #     results_queue=results_queue,
-                # )
                 now = time()
                 sleep_for = max(0, started + (interval * (i + 1)) - now)
                 sleep(sleep_for)
@@ -302,13 +314,19 @@ class TestPerformanceMultiThreaded(KeyValueSystemTestCase):
 
             # Check each process has a resolution.
             for i in range(n + 1):
-                future = futures_queue.get(timeout=1)
+                future = futures_queue.get(timeout=5)
                 i_started: float = future.started
                 try:
-                    future.result(timeout=5)
+                    future.result(timeout=10000)
+                except CommandRejected as e:
+                    print("Command rejected:", e, future.original_cmd_text)
+                except CommandFutureEvicted as e:
+                    print("Command future evicted:", e, future.original_cmd_text)
                 except TimeoutError:
-                    raise Exception("Timeout waiting for future")
-                i_finished: float = future.finished
+                    raise Exception(
+                        "Timeout waiting for future", future.original_cmd_text
+                    )
+                i_finished = future.finished
                 timings.append((i_started, i_finished))
                 finished_times.append(i_finished)
                 i_latency = i_finished - i_started
@@ -321,14 +339,10 @@ class TestPerformanceMultiThreaded(KeyValueSystemTestCase):
                         last_started_count = started_count
                         continue
                     else:
-                        period_started_count = (
-                            started_count - last_started_count
-                        )
+                        period_started_count = started_count - last_started_count
                         duration = finished_times[i] - started_times[0]
                         period_duration = period_started - last_period_started
-                        finished_duration = (
-                            i_finished - finished_times[i - period]
-                        )
+                        finished_duration = i_finished - finished_times[i - period]
                         avg_latency = sum(latencies[i - period : i]) / period
                         print(
                             f"Completed {i} commands in {duration:.1f}s: "
@@ -373,6 +387,46 @@ class TestPerformanceMultiThreaded(KeyValueSystemTestCase):
 
         sys.stdout.flush()
         sleep(0.1)
+
+        print("Checking paxos logs...")
+        has_errors = False
+        for paxos_logged in apps[0].paxos_log.get():
+            aggregate_id = apps[0].create_paxos_aggregate_id_from_round(paxos_logged.originator_version)
+            paxos_aggregate0 = cast(PaxosAggregate, apps[0].repository.get(aggregate_id))
+            paxos_aggregate1 = cast(PaxosAggregate, apps[1].repository.get(aggregate_id))
+            paxos_aggregate2 = cast(PaxosAggregate, apps[2].repository.get(aggregate_id))
+            if paxos_aggregate1.final_value != paxos_aggregate0.final_value:
+                print("Log different in app 1 from app0 at position:", paxos_aggregate0.final_value)
+                has_errors = True
+            if paxos_aggregate1.final_value != paxos_aggregate0.final_value:
+                print("Log different in app 1 from app0 at position:",
+                      paxos_logged.originator_version,
+                      paxos_aggregate1.final_value,
+                      paxos_aggregate0.final_value
+                      )
+                has_errors = True
+            if paxos_aggregate2.final_value != paxos_aggregate0.final_value:
+                print("Log different in app 2 from app0 at position:",
+                      paxos_logged.originator_version,
+                      paxos_aggregate2.final_value,
+                      paxos_aggregate0.final_value
+                      )
+                has_errors = True
+        if not has_errors:
+            print("All apps have same command logs")
+
+        field_value0 = apps[0].propose_command("HGET myhash0 field").result()
+        field_value1 = apps[0].propose_command("HGET myhash0 field").result()
+        field_value2 = apps[0].propose_command("HGET myhash0 field").result()
+        if field_value0 != field_value1:
+            print("Field value different", field_value0, field_value1)
+            has_errors = True
+        if field_value0 != field_value2:
+            print("Field value different", field_value0, field_value2)
+            has_errors = True
+        self.assertFalse(has_errors)
+        print("Field value:", field_value0)
+
 
 
 class TestPerformanceMultiThreadedWithSQLite(

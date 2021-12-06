@@ -1,4 +1,4 @@
-from typing import Any, Mapping, Optional
+from typing import Any, List, Mapping, Optional
 from uuid import UUID
 
 from eventsourcing.application import AggregateNotFound, ProcessEvent
@@ -32,7 +32,7 @@ class PaxosApplication(CachingApplication[Aggregate], ProcessApplication[Aggrega
     def __init__(self, env: Optional[Mapping[str, str]] = None) -> None:
         super().__init__(env)
         self.assume_leader = False
-        self.announce_resolutions = False
+        self.announce_resolutions = True
 
     @property
     def name(self):
@@ -54,11 +54,11 @@ class PaxosApplication(CachingApplication[Aggregate], ProcessApplication[Aggrega
         """
         Starts new Paxos aggregate and proposes a value for a key.
         """
-        paxos_aggregate = self.start_paxos(key, value)
+        paxos_aggregate = self.start_paxos(key, value, self.assume_leader)
         self.save(paxos_aggregate)
         return paxos_aggregate  # in case it's new
 
-    def start_paxos(self, key, value):
+    def start_paxos(self, key, value, assume_leader):
         assert self.num_participants > 1
         assert isinstance(key, UUID)
         quorum_size = 1 + self.num_participants // 2
@@ -68,12 +68,18 @@ class PaxosApplication(CachingApplication[Aggregate], ProcessApplication[Aggrega
             network_uid=self.name,
             announce_resolution=self.announce_resolutions,
         )
-        msg = paxos_aggregate.propose_value(value, assume_leader=self.assume_leader)
+        msg = paxos_aggregate.propose_value(value, assume_leader=assume_leader)
         paxos_aggregate.receive_message(msg)
         return paxos_aggregate
 
     def get_final_value(self, key: UUID) -> PaxosAggregate:
         return self.repository.get(key).final_value
+
+    def notify(self, new_events: List[AggregateEvent[Aggregate]]) -> None:
+        for new_event in new_events:
+            if isinstance(new_event, PaxosAggregate.MessageAnnounced):
+                self.prompt_followers()
+                return
 
     def policy(
         self,

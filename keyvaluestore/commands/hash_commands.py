@@ -5,13 +5,13 @@ from eventsourcing.application import AggregateNotFound
 from eventsourcing.domain import Aggregate
 
 from replicatedstatemachine.application import StateMachineReplica
-from keyvaluestore.commands import KeyValueStoreCommand
+from keyvaluestore.commands import KeyValueCommand
 from keyvaluestore.domainmodel import (
     KeyNameIndex,
 )
 
 
-class HSETCommand(KeyValueStoreCommand):
+class HSETCommand(KeyValueCommand):
     @property
     def field_name(self) -> str:
         return self.cmd[2]
@@ -26,7 +26,7 @@ class HSETCommand(KeyValueStoreCommand):
         return (kv_aggregate, index), 1
 
 
-class HSETNXCommand(KeyValueStoreCommand):
+class HSETNXCommand(KeyValueCommand):
     @property
     def field_name(self) -> str:
         return self.cmd[2]
@@ -45,7 +45,7 @@ class HSETNXCommand(KeyValueStoreCommand):
         return (kv_aggregate, index), result
 
 
-class HINCRBYCommand(KeyValueStoreCommand):
+class HINCRBYCommand(KeyValueCommand):
     @property
     def field_name(self) -> str:
         return self.cmd[2]
@@ -64,7 +64,7 @@ class HINCRBYCommand(KeyValueStoreCommand):
         return (kv_aggregate, index), field_value
 
 
-class HDELCommand(KeyValueStoreCommand):
+class HDELCommand(KeyValueCommand):
     @property
     def field_name(self) -> str:
         return self.cmd[2]
@@ -80,7 +80,7 @@ class HDELCommand(KeyValueStoreCommand):
         return (kv_aggregate,), result
 
 
-class HGETCommand(KeyValueStoreCommand):
+class HGETCommand(KeyValueCommand):
     mutates_state = False
 
     @property
