@@ -6,5 +6,9 @@ class CommandFutureEvicted(Exception):
     pass
 
 
-class CommandErrored(Exception):
+class CommandExecutionError(Exception):
+    pass
+
+
+class PaxosProtocolError(Exception):
     pass

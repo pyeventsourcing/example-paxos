@@ -22,7 +22,7 @@ class Cache(Generic[_S, _T]):
     def __init__(self):
         self.cache: Dict[_S, _T] = {}
 
-    def get(self, key: _S, evict=False) -> _T:
+    def get(self, key: _S, evict: bool = False) -> _T:
         if evict:
             return self.cache.pop(key)
         else:

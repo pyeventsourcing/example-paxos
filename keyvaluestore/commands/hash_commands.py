@@ -56,7 +56,9 @@ class HINCRBYCommand(KeyValueCommand):
 
     def execute(self, app: StateMachineReplica) -> Tuple[Tuple[Aggregate, ...], Any]:
         kv_aggregate, index = self.resolve_key_name(app, self.key_name)
-        field_value = self.incr_by + Decimal(kv_aggregate.get_field_value(self.field_name) or 0)
+        field_value = self.incr_by + Decimal(
+            kv_aggregate.get_field_value(self.field_name) or 0
+        )
         kv_aggregate.set_field_value(
             self.field_name,
             str(field_value),

@@ -34,7 +34,7 @@ class PaxosAggregate(Aggregate):
             id=originator_id,
             quorum_size=quorum_size,
             network_uid=network_uid,
-            announce_resolution=announce_resolution
+            announce_resolution=announce_resolution,
         )
 
     class Started(Aggregate.Created["PaxosAggregate"]):

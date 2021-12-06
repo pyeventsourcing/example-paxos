@@ -88,7 +88,7 @@ class PaxosApplication(CachingApplication[Aggregate], ProcessApplication[Aggrega
         """
         if isinstance(domain_event, PaxosAggregate.MessageAnnounced):
             paxos, resolution_msg = self.process_message_announced(domain_event)
-            process_event.save(paxos)
+            process_event.collect_events(paxos)
 
     def process_message_announced(self, domain_event):
         # Get or create aggregate.

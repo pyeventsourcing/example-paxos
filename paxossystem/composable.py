@@ -81,7 +81,7 @@ class ProposalID(object):
     def __repr__(self):
         return "{}({})".format(
             self.__class__.__name__,
-            ", ".join("{}={}".format(k, repr(v)) for k, v in self.__dict__.items())
+            ", ".join("{}={}".format(k, repr(v)) for k, v in self.__dict__.items()),
         )
 
     def __hash__(self):
@@ -98,7 +98,7 @@ class PaxosMessage(object):
     def __repr__(self):
         return "{}({})".format(
             self.__class__.__name__,
-            ", ".join("{}={}".format(k, repr(v)) for k, v in self.__dict__.items())
+            ", ".join("{}={}".format(k, repr(v)) for k, v in self.__dict__.items()),
         )
 
 
@@ -300,7 +300,8 @@ class Proposer(MessageHandler):
             # prepare() is called and then we receive our own Promise.
             if (
                 self.highest_accepted_id is None
-                or msg.last_accepted_id and msg.last_accepted_id > self.highest_accepted_id
+                or msg.last_accepted_id
+                and msg.last_accepted_id > self.highest_accepted_id
             ):
                 self.highest_accepted_id = msg.last_accepted_id
                 if msg.last_accepted_value is not None:

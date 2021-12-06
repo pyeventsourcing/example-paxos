@@ -101,14 +101,15 @@ class TestWithPostgreSQL(KeyValueSystemTestCase):
 
 
 class TestSystemSingleThreaded(KeyValueSystemTestCase):
-    @retry(AssertionError, max_attempts=100, wait=0.05)
+    @retry((AssertionError, CommandRejected), max_attempts=100, wait=0.05)
     def assert_result(self, app, cmd, value):
         self.assertEqual(app.propose_command(cmd).result(), value)
 
     def test_propose_command(self):
 
         apps = [
-            self.get_app(f"{KeyValueReplica.__name__}{i}") for i in range(self.num_participants)
+            self.get_app(f"{KeyValueReplica.__name__}{i}")
+            for i in range(self.num_participants)
         ]
         app0 = apps[0]
 
@@ -173,7 +174,8 @@ class TestPerformanceSingleThreaded(KeyValueSystemTestCase):
     def test_performance(self):
         print(type(self))
         apps = [
-            self.get_app(f"{KeyValueReplica.name}{i}") for i in range(self.num_participants)
+            self.get_app(f"{KeyValueReplica.name}{i}")
+            for i in range(self.num_participants)
         ]
 
         period = self.period
@@ -297,7 +299,7 @@ class TestPerformanceMultiThreaded(KeyValueSystemTestCase):
                 # app = random.choice(apps)
 
                 # app = apps[0]
-                app.assume_leader = False
+                # app.assume_leader = True
 
                 now = time()
                 started_times.append(now)
@@ -391,27 +393,52 @@ class TestPerformanceMultiThreaded(KeyValueSystemTestCase):
 
         print("Checking paxos logs...")
         has_errors = False
+        log_counts = []
+        first_log_count = None
+        for app in apps:
+            log_count = len(list(app.paxos_log.get()))
+            print(f"Application {app.name} has {log_count} items in log")
+            log_counts.append(log_count)
+            if first_log_count is None:
+                first_log_count = log_count
+            else:
+                self.assertEqual(first_log_count, log_count, app.name)
+
+
         for paxos_logged in apps[0].paxos_log.get():
-            aggregate_id = apps[0].create_paxos_aggregate_id_from_round(paxos_logged.originator_version)
-            paxos_aggregate0 = cast(PaxosAggregate, apps[0].repository.get(aggregate_id))
-            paxos_aggregate1 = cast(PaxosAggregate, apps[1].repository.get(aggregate_id))
-            paxos_aggregate2 = cast(PaxosAggregate, apps[2].repository.get(aggregate_id))
+            aggregate_id = apps[0].create_paxos_aggregate_id_from_round(
+                paxos_logged.originator_version
+            )
+            paxos_aggregate0 = cast(
+                PaxosAggregate, apps[0].repository.get(aggregate_id)
+            )
+            paxos_aggregate1 = cast(
+                PaxosAggregate, apps[1].repository.get(aggregate_id)
+            )
+            paxos_aggregate2 = cast(
+                PaxosAggregate, apps[2].repository.get(aggregate_id)
+            )
             if paxos_aggregate1.final_value != paxos_aggregate0.final_value:
-                print("Log different in app 1 from app0 at position:", paxos_aggregate0.final_value)
+                print(
+                    "Log different in app 1 from app0 at position:",
+                    paxos_aggregate0.final_value,
+                )
                 has_errors = True
             if paxos_aggregate1.final_value != paxos_aggregate0.final_value:
-                print("Log different in app 1 from app0 at position:",
-                      paxos_logged.originator_version,
-                      paxos_aggregate1.final_value,
-                      paxos_aggregate0.final_value
-                      )
+                print(
+                    "Log different in app 1 from app0 at position:",
+                    paxos_logged.originator_version,
+                    paxos_aggregate1.final_value,
+                    paxos_aggregate0.final_value,
+                )
                 has_errors = True
             if paxos_aggregate2.final_value != paxos_aggregate0.final_value:
-                print("Log different in app 2 from app0 at position:",
-                      paxos_logged.originator_version,
-                      paxos_aggregate2.final_value,
-                      paxos_aggregate0.final_value
-                      )
+                print(
+                    "Log different in app 2 from app0 at position:",
+                    paxos_logged.originator_version,
+                    paxos_aggregate2.final_value,
+                    paxos_aggregate0.final_value,
+                )
                 has_errors = True
         if not has_errors:
             print("All apps have same command logs")
@@ -427,7 +454,6 @@ class TestPerformanceMultiThreaded(KeyValueSystemTestCase):
             has_errors = True
         self.assertFalse(has_errors)
         print("Field value:", field_value0)
-
 
 
 class TestPerformanceMultiThreadedWithSQLite(

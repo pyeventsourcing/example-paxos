@@ -11,11 +11,14 @@ class PaxosSystem(System):
         self.app_class = app_class
         num_participants = num_participants
         classes = [
-            cast(Type[PaxosApplication], type(
-                f"{self.app_class.name}{i}",
-                (self.app_class,),
-                {"num_participants": num_participants},
-            ))
+            cast(
+                Type[PaxosApplication],
+                type(
+                    f"{self.app_class.name}{i}",
+                    (self.app_class,),
+                    {"num_participants": num_participants},
+                ),
+            )
             for i in range(num_participants)
         ]
         assert num_participants > 1
