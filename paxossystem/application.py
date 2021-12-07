@@ -32,6 +32,7 @@ class PaxosApplication(CachingApplication[Aggregate], ProcessApplication[Aggrega
     def __init__(self, env: Optional[Mapping[str, str]] = None) -> None:
         super().__init__(env)
         self.assume_leader = False
+        self.is_elected_leader = None
         self.announce_resolutions = False
 
     def register_transcodings(self, transcoder: Transcoder) -> None:
@@ -70,12 +71,6 @@ class PaxosApplication(CachingApplication[Aggregate], ProcessApplication[Aggrega
 
     def get_final_value(self, key: UUID) -> PaxosAggregate:
         return self.repository.get(key).final_value
-
-    def notify(self, new_events: List[AggregateEvent[Aggregate]]) -> None:
-        for new_event in new_events:
-            if isinstance(new_event, PaxosAggregate.MessageAnnounced):
-                self.prompt_followers()
-                return
 
     def policy(
         self,

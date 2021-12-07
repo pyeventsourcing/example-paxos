@@ -442,7 +442,9 @@ class Learner(MessageHandler):
 
         ps = self.proposals[proposal_key]
 
-        assert msg.proposal_value == ps.value, "Value mismatch for single proposal!"
+        assert (
+            msg.proposal_value == ps.value
+        ), f"Value mismatch for single proposal! {msg.proposal_value} {ps.value}"
 
         ps.accept_count += 1
         ps.retain_count += 1

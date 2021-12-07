@@ -9,15 +9,15 @@ from typing import (
     Tuple,
     Type,
 )
-from uuid import NAMESPACE_URL, UUID, uuid5
+from uuid import NAMESPACE_URL, UUID, uuid4, uuid5
 
 from eventsourcing.application import ProcessEvent
 from eventsourcing.domain import Aggregate, AggregateEvent, TAggregate
 from eventsourcing.persistence import IntegrityError
-from eventsourcing.utils import resolve_topic, retry
+from eventsourcing.utils import get_topic, resolve_topic
 
 from paxossystem.cache import Cache, LRUCache
-from replicatedstatemachine.domainmodel import PaxosLogged
+from replicatedstatemachine.domainmodel import CommandForwarded, PaxosLogged
 from replicatedstatemachine.eventsourcedlog import EventSourcedLog
 from replicatedstatemachine.exceptions import (
     CommandExecutionError,
@@ -62,6 +62,11 @@ class StateMachineReplica(PaxosApplication):
     futures_cache_maxsize = 1000
     log_read_commands = True
 
+    follow_topics = [
+        get_topic(PaxosAggregate.MessageAnnounced),
+        get_topic(CommandForwarded),
+    ]
+
     def __init__(self, env: Optional[Mapping[str, str]] = None) -> None:
         super().__init__(env)
         # Decide base command class.
@@ -97,39 +102,66 @@ class StateMachineReplica(PaxosApplication):
         # Decide whether or not to put the command in the replicated log.
         if (self.log_read_commands or cmd.mutates_state) and self.num_participants > 1:
 
-            # Start a Paxos instance.
-            paxos_logged = self.paxos_log.trigger_event()
-            proposal_key = self.create_paxos_aggregate_id_from_round(
-                round=paxos_logged.originator_version
-            )
-            paxos_aggregate = self.start_paxos(
-                proposal_key, cmd_text, self.assume_leader
-            )
+            if self.is_elected_leader is False:
+                # Forward the command to the elected leader.
+                forwarded_cmd_id = uuid4()
+                self.save(
+                    CommandForwarded(
+                        originator_id=forwarded_cmd_id,
+                        originator_version=Aggregate.INITIAL_VERSION,
+                        timestamp=CommandForwarded.create_timestamp(),
+                        cmd_text=cmd_text,
+                    )
+                )
 
-            # Put the future in cache, to result after reaching consensus.
-            evicted_future = self.futures.put(proposal_key, future)
+                # Put the future in cache, set result after reaching consensus.
+                evicted_future = self.futures.put(forwarded_cmd_id, future)
 
-            # Finish any evicted future, with an error in anybody waiting.
-            self.set_future_exception(
-                evicted_future, CommandFutureEvicted("Futures cache full")
-            )
+                # Finish any evicted future, with an error in anybody waiting.
+                self.set_future_exception(
+                    evicted_future, CommandFutureEvicted("Futures cache full")
+                )
 
-            # Save the Paxos aggregate.
-            try:
-                self.save(paxos_aggregate, paxos_logged)
+            else:
 
-            # Conflicted with other replicas.
-            except IntegrityError:
-                msg = f"{self.name}: Rejecting command for round {paxos_logged.originator_version}"
-                if list(self.events.get(paxos_aggregate.id)):
-                    msg += f": Already have paxos aggregate: {paxos_aggregate.id}"
-                error = CommandRejected(msg)
+                with self.processing_lock:
+                    # Start a Paxos instance.
+                    paxos_logged = self.paxos_log.trigger_event()
+                    proposal_key = self.create_paxos_aggregate_id_from_round(
+                        round=paxos_logged.originator_version
+                    )
+                    paxos_aggregate = self.start_paxos(
+                        proposal_key,
+                        [cmd_text, None],
+                        self.assume_leader or self.is_elected_leader is True,
+                    )
 
-                # Set error on command future.
-                self.set_future_exception(future, error)
+                    # Put the future in cache, set result after reaching consensus.
+                    evicted_future = self.futures.put(proposal_key, future)
 
-                # Evict the future from the cache.
-                self.get_command_future(paxos_aggregate.id, evict=True)
+                    # Finish any evicted future, with an error in anybody waiting.
+                    self.set_future_exception(
+                        evicted_future, CommandFutureEvicted("Futures cache full")
+                    )
+
+                    # Save the Paxos aggregate.
+                    try:
+                        self.save(paxos_aggregate, paxos_logged)
+
+                    # Conflicted with other replicas.
+                    except IntegrityError:
+                        msg = f"{self.name}: Rejecting command for round {paxos_logged.originator_version}"
+                        if list(self.events.get(paxos_aggregate.id)):
+                            msg += (
+                                f": Already have paxos aggregate: {paxos_aggregate.id}"
+                            )
+                        error = CommandRejected(msg)
+
+                        # Set error on command future.
+                        self.set_future_exception(future, error)
+
+                        # Evict the future from the cache.
+                        self.get_command_future(paxos_aggregate.id, evict=True)
 
         else:
             # Just execute the command immediately and save results.
@@ -159,8 +191,24 @@ class StateMachineReplica(PaxosApplication):
         Processes paxos "message announced" events of other applications
         by starting or continuing a paxos aggregate in this application.
         """
-        # Just process Paxos messages.
-        if isinstance(domain_event, PaxosAggregate.MessageAnnounced):
+        if isinstance(domain_event, CommandForwarded):
+            if self.is_elected_leader is True:
+                # Start a Paxos instance.
+                paxos_logged = self.paxos_log.trigger_event()
+                proposal_key = self.create_paxos_aggregate_id_from_round(
+                    round=paxos_logged.originator_version
+                )
+                paxos_aggregate = self.start_paxos(
+                    proposal_key,
+                    [domain_event.cmd_text, domain_event.originator_id],
+                    True,
+                )
+                process_event.collect_events(paxos_aggregate, paxos_logged)
+
+                # Todo: Somehow set result on future (pass command forwarded originator ID as part of
+                #  proposal_value, and put ID in future cache on non-elected leader).
+
+        elif isinstance(domain_event, PaxosAggregate.MessageAnnounced):
 
             # Process Paxos message.
             print(self.name, domain_event.originator_id, "processing", domain_event.msg)
@@ -177,21 +225,20 @@ class StateMachineReplica(PaxosApplication):
             if len(paxos_aggregate.pending_events) == paxos_aggregate.version:
                 # Add new paxos aggregate to the paxos log.
                 paxos_logged = self.paxos_log.trigger_event()
-                paxos_id = self.create_paxos_aggregate_id_from_round(
+                expected_paxos_id = self.create_paxos_aggregate_id_from_round(
                     paxos_logged.originator_version
                 )
-                # Check the paxos log isn't out of order.
-                if paxos_id != paxos_aggregate.id:
+                # Check the paxos log order.
+                if expected_paxos_id == paxos_aggregate.id:
+                    # Collect events from Paxos aggregate and log.
+                    process_event.collect_events(paxos_aggregate)
+                    process_event.collect_events(paxos_logged)
+                else:
                     # Out of order commands (new command was proposed since starting Paxos).
                     future = self.get_command_future(paxos_aggregate.id, evict=True)
                     self.set_future_exception(
                         future, CommandRejected("Paxos log position now occupied")
                     )
-                else:
-                    # Collect events from Paxos aggregate and log.
-                    process_event.collect_events(paxos_aggregate)
-                    process_event.collect_events(paxos_logged)
-
             else:
                 # Collect events from Paxos aggregate.
                 process_event.collect_events(paxos_aggregate)
@@ -200,12 +247,15 @@ class StateMachineReplica(PaxosApplication):
             if resolution_msg:
                 aggregates, result = (), None
                 # Parse the command text into a command object.
-                cmd = self.command_class.parse(paxos_aggregate.final_value)
+                cmd_text = paxos_aggregate.final_value[0]
+                cmd_id = paxos_aggregate.final_value[1]
+                cmd = self.command_class.parse(cmd_text)
 
                 # Decide if we will execute the command.
-                future = self.get_command_future(paxos_aggregate.id, evict=True)
+                future_key = cmd_id or paxos_aggregate.id
+                future = self.get_command_future(future_key, evict=True)
                 if cmd.mutates_state or future:
-                    print(self.name, "executing", paxos_aggregate.final_value)
+                    print(self.name, "executing", cmd_text)
                     try:
                         aggregates, result = cmd.execute(self)
                     except Exception as e:
@@ -216,16 +266,11 @@ class StateMachineReplica(PaxosApplication):
                         process_event.collect_events(*aggregates)
 
                         # Check we executed what was expected by the client.
-                        if (
-                            future
-                            and future.original_cmd_text != paxos_aggregate.final_value
-                        ):
+                        if future and future.original_cmd_text != cmd_text:
                             self.set_future_exception(
                                 future,
                                 CommandRejected(
-                                    "Executed another command '{}'".format(
-                                        paxos_aggregate.final_value
-                                    )
+                                    "Executed another command '{}'".format(cmd_text)
                                 ),
                             )
                         else:

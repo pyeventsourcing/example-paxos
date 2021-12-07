@@ -102,8 +102,8 @@ class TestWithPostgreSQL(KeyValueSystemTestCase):
 
 class TestSystemSingleThreaded(KeyValueSystemTestCase):
     @retry((AssertionError, CommandRejected), max_attempts=100, wait=0.05)
-    def assert_result(self, app, cmd, value):
-        self.assertEqual(app.propose_command(cmd).result(), value)
+    def assert_result(self, app, cmd_text, expected_result):
+        self.assertEqual(app.propose_command(cmd_text).result(), expected_result)
 
     def test_propose_command(self):
 
@@ -294,11 +294,16 @@ class TestPerformanceMultiThreaded(KeyValueSystemTestCase):
 
         def write():
             started = time()
+
+            apps[0].is_elected_leader = True
+            apps[1].is_elected_leader = False
+            apps[2].is_elected_leader = False
+
             for i in list(range(n + 1)):
                 app = apps[i % self.num_participants]
                 # app = random.choice(apps)
-
                 # app = apps[0]
+
                 # app.assume_leader = True
 
                 now = time()
@@ -320,7 +325,7 @@ class TestPerformanceMultiThreaded(KeyValueSystemTestCase):
                 future = futures_queue.get(timeout=5)
                 i_started: float = future.started
                 try:
-                    future.result(timeout=10000)
+                    future.result(timeout=1)
                 except CommandRejected as e:
                     print("Command rejected:", e, future.original_cmd_text)
                 except CommandFutureEvicted as e:
@@ -403,7 +408,6 @@ class TestPerformanceMultiThreaded(KeyValueSystemTestCase):
                 first_log_count = log_count
             else:
                 self.assertEqual(first_log_count, log_count, app.name)
-
 
         for paxos_logged in apps[0].paxos_log.get():
             aggregate_id = apps[0].create_paxos_aggregate_id_from_round(
