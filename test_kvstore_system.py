@@ -105,7 +105,7 @@ class TestSystemSingleThreaded(KeyValueSystemTestCase):
     def assert_result(self, app, cmd_text, expected_result):
         self.assertEqual(app.propose_command(cmd_text).result(), expected_result)
 
-    def test_propose_command(self):
+    def test_propose_commands_no_leader(self):
 
         apps = [
             self.get_app(f"{KeyValueReplica.__name__}{i}")
@@ -142,6 +142,28 @@ class TestSystemSingleThreaded(KeyValueSystemTestCase):
 
         for app in apps:
             self.assert_result(app, "HGET myhash2 field", "Goodbye")
+
+    def test_propose_leader(self):
+
+        apps = [
+            self.get_app(f"{KeyValueReplica.__name__}{i}")
+            for i in range(self.num_participants)
+        ]
+        app0 = apps[0]
+
+        # Check each process has expected initial value.
+        for app in apps:
+            self.assertIsNone(app.is_elected_leader, None)
+
+        app0.propose_leader()
+
+        @retry(AssertionError, max_attempts=100, wait=0.01)
+        def assert_is_elected_leader(app: StateMachineReplica, status: bool):
+            self.assertTrue(app.is_elected_leader is status)
+
+        assert_is_elected_leader(app0, True)
+        for app in apps[1:]:
+            assert_is_elected_leader(app, False)
 
 
 class TestSystemSingleThreadedWithSQLite(TestWithSQLite, TestSystemSingleThreaded):

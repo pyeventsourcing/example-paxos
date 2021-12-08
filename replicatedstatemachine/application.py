@@ -17,7 +17,7 @@ from eventsourcing.persistence import IntegrityError
 from eventsourcing.utils import get_topic, resolve_topic
 
 from paxossystem.cache import Cache, LRUCache
-from replicatedstatemachine.domainmodel import CommandForwarded, PaxosLogged
+from replicatedstatemachine.domainmodel import CommandForwarded, LeadershipElection, PaxosLogged
 from replicatedstatemachine.eventsourcedlog import EventSourcedLog
 from replicatedstatemachine.exceptions import (
     CommandExecutionError,
@@ -65,6 +65,7 @@ class StateMachineReplica(PaxosApplication):
     follow_topics = [
         get_topic(PaxosAggregate.MessageAnnounced),
         get_topic(CommandForwarded),
+        get_topic(LeadershipElection.MessageAnnounced),
     ]
 
     def __init__(self, env: Optional[Mapping[str, str]] = None) -> None:
@@ -91,6 +92,16 @@ class StateMachineReplica(PaxosApplication):
         self.paxos_log: EventSourcedLog[PaxosLogged] = EventSourcedLog(
             self.events, uuid5(NAMESPACE_URL, "/paxoslog"), PaxosLogged
         )
+        self.last_election_id = None
+
+    def propose_leader(self):
+        election_id = uuid4()
+        paxos_aggregate = self.start_paxos(
+            key=election_id,
+            value=self.name,
+            paxos_cls=LeadershipElection,
+        )
+        self.save(paxos_aggregate)
 
     def propose_command(self, cmd_text: str) -> CommandFuture:
         # Parse the command text into a command object.
@@ -131,9 +142,9 @@ class StateMachineReplica(PaxosApplication):
                         round=paxos_logged.originator_version
                     )
                     paxos_aggregate = self.start_paxos(
-                        proposal_key,
-                        [cmd_text, None],
-                        self.assume_leader or self.is_elected_leader is True,
+                        key=proposal_key,
+                        value=[cmd_text, None],
+                        assume_leader=self.assume_leader or self.is_elected_leader is True,
                     )
 
                     # Put the future in cache, set result after reaching consensus.
@@ -205,17 +216,18 @@ class StateMachineReplica(PaxosApplication):
                 )
                 process_event.collect_events(paxos_aggregate, paxos_logged)
 
-                # Todo: Somehow set result on future (pass command forwarded originator ID as part of
-                #  proposal_value, and put ID in future cache on non-elected leader).
+        elif isinstance(domain_event, LeadershipElection.MessageAnnounced):
+            paxos_aggregate, resolution_msg = self.process_message_announced(domain_event, LeadershipElection)
+            process_event.collect_events(paxos_aggregate)
+            if resolution_msg:
+                self.is_elected_leader = self.name == paxos_aggregate.final_value
 
         elif isinstance(domain_event, PaxosAggregate.MessageAnnounced):
 
             # Process Paxos message.
             print(self.name, domain_event.originator_id, "processing", domain_event.msg)
             try:
-                paxos_aggregate, resolution_msg = self.process_message_announced(
-                    domain_event
-                )
+                paxos_aggregate, resolution_msg = self.process_message_announced(domain_event)
             except Exception as e:
                 # Re-raise a protocol implementation error.
                 error_msg = f"{self.name} {domain_event.originator_id} errored processing {domain_event.msg}"
@@ -245,7 +257,6 @@ class StateMachineReplica(PaxosApplication):
 
             # Decide if consensus has been reached on the command.
             if resolution_msg:
-                aggregates, result = (), None
                 # Parse the command text into a command object.
                 cmd_text = paxos_aggregate.final_value[0]
                 cmd_id = paxos_aggregate.final_value[1]

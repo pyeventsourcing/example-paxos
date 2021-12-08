@@ -1,4 +1,4 @@
-from typing import Any, List, Mapping, Optional
+from typing import Any, Mapping, Optional, Type
 from uuid import UUID
 
 from eventsourcing.application import AggregateNotFound, ProcessEvent
@@ -55,11 +55,11 @@ class PaxosApplication(CachingApplication[Aggregate], ProcessApplication[Aggrega
         self.save(paxos_aggregate)
         return paxos_aggregate  # in case it's new
 
-    def start_paxos(self, key, value, assume_leader):
+    def start_paxos(self, key, value, assume_leader=False, paxos_cls=PaxosAggregate):
         assert self.num_participants > 1
         assert isinstance(key, UUID)
         quorum_size = 1 + self.num_participants // 2
-        paxos_aggregate = PaxosAggregate.start(
+        paxos_aggregate = paxos_cls.start(
             originator_id=key,
             quorum_size=quorum_size,
             network_uid=self.name,
@@ -85,13 +85,15 @@ class PaxosApplication(CachingApplication[Aggregate], ProcessApplication[Aggrega
             paxos, resolution_msg = self.process_message_announced(domain_event)
             process_event.collect_events(paxos)
 
-    def process_message_announced(self, domain_event):
+    def process_message_announced(
+        self, domain_event: PaxosAggregate.MessageAnnounced, paxos_cls: Type[PaxosAggregate] = PaxosAggregate
+    ):
         # Get or create aggregate.
         try:
             paxos_aggregate = self.repository.get(domain_event.originator_id)
         except AggregateNotFound:
             quorum_size = 1 + self.num_participants // 2
-            paxos_aggregate = PaxosAggregate.start(
+            paxos_aggregate = paxos_cls.start(
                 originator_id=domain_event.originator_id,
                 quorum_size=quorum_size,
                 network_uid=self.name,
