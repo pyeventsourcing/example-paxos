@@ -24,7 +24,7 @@ from paxossystem.cache import Cache, LRUCache
 from paxossystem.composable import Accept, Accepted, Nack, Prepare, Promise, Resolution
 from replicatedstatemachine.domainmodel import (
     CommandForwarded,
-    ElectionLogged,
+    CommandProposal, ElectionLogged,
     LeadershipElection,
     CommandLogged,
 )
@@ -123,9 +123,9 @@ class StateMachineReplica(PaxosApplication):
     leader_lease = 10
 
     follow_topics = [
-        get_topic(PaxosAggregate.MessageAnnounced),
-        get_topic(CommandForwarded),
         get_topic(LeadershipElection.MessageAnnounced),
+        get_topic(CommandProposal.MessageAnnounced),
+        get_topic(CommandForwarded),
     ]
 
     def __init__(self, env: Optional[Mapping[str, str]] = None) -> None:
@@ -249,6 +249,7 @@ class StateMachineReplica(PaxosApplication):
                         key=proposal_key,
                         value=[cmd_text, None],
                         assume_leader=self.assume_leader or self.is_elected_leader,
+                        paxos_cls=CommandProposal,
                     )
 
                     # Put the future in cache, set result after reaching consensus.
@@ -308,9 +309,10 @@ class StateMachineReplica(PaxosApplication):
                         round=paxos_logged.originator_version
                     )
                     command_proposal = self.start_paxos(
-                        proposal_key,
-                        [domain_event.cmd_text, domain_event.originator_id],
-                        True,
+                        key=proposal_key,
+                        value=[domain_event.cmd_text, domain_event.originator_id],
+                        assume_leader=True,
+                        paxos_cls=CommandProposal,
                     )
                     process_event.collect_events(command_proposal, paxos_logged)
                 else:
@@ -387,50 +389,52 @@ class StateMachineReplica(PaxosApplication):
                         )
                         self.disestablish_leadership_timer.start()
 
-        elif isinstance(domain_event, PaxosAggregate.MessageAnnounced):
+        elif isinstance(domain_event, CommandProposal.MessageAnnounced):
 
             # Process Paxos message.
-            print(self.name, domain_event.originator_id, "processing", domain_event.msg)
+            # _print(self.name, domain_event.originator_id, "processing", domain_event.msg)
             try:
-                paxos_aggregate, resolution_msg = self.process_announced_message(
-                    domain_event
+                command_proposal, resolution_msg = self.process_announced_message(
+                    domain_event=domain_event, paxos_cls=CommandProposal
                 )
             except Exception as e:
                 # Re-raise a protocol implementation error.
                 error_msg = f"{self.name} {domain_event.originator_id} errored processing {domain_event.msg}"
                 raise PaxosProtocolError(error_msg) from e
 
+            # _print(self.name, "produced", command_proposal.pending_events)
+
             # Decide if we have a new Paxos aggregate.
-            if len(paxos_aggregate.pending_events) == paxos_aggregate.version:
+            if len(command_proposal.pending_events) == command_proposal.version:
                 # Add new paxos aggregate to the paxos log.
                 paxos_logged = self.command_log.trigger_event()
                 expected_paxos_id = create_command_proposal_id_from_round(
                     paxos_logged.originator_version
                 )
                 # Check the paxos log order.
-                if expected_paxos_id == paxos_aggregate.id:
+                if expected_paxos_id == command_proposal.id:
                     # Collect events from Paxos aggregate and log.
-                    process_event.collect_events(paxos_aggregate)
+                    process_event.collect_events(command_proposal)
                     process_event.collect_events(paxos_logged)
                 else:
                     # Out of order commands (new command was proposed since starting Paxos).
-                    future = self.get_command_future(paxos_aggregate.id, evict=True)
+                    future = self.get_command_future(command_proposal.id, evict=True)
                     self.set_future_exception(
                         future, CommandRejected("Paxos log position now occupied")
                     )
             else:
                 # Collect events from Paxos aggregate.
-                process_event.collect_events(paxos_aggregate)
+                process_event.collect_events(command_proposal)
 
             # Decide if consensus has been reached on the command.
             if resolution_msg:
                 # Parse the command text into a command object.
-                cmd_text = paxos_aggregate.final_value[0]
-                cmd_id = paxos_aggregate.final_value[1]
+                cmd_text = command_proposal.final_value[0]
+                cmd_id = command_proposal.final_value[1]
                 cmd = self.command_class.parse(cmd_text)
 
                 # Decide if we will execute the command.
-                future_key = cmd_id or paxos_aggregate.id
+                future_key = cmd_id or command_proposal.id
                 future = self.get_command_future(future_key, evict=True)
                 if cmd.mutates_state or future:
                     print(self.name, "executing", cmd_text)
