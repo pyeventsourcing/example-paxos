@@ -31,6 +31,7 @@ class TestPaxosSystemSingleThreaded(unittest.TestCase):
     runner_class: Type[Runner] = SingleThreadedRunner
 
     def setUp(self):
+        eventsourcing.utils._topic_cache.clear()
         print(self.__class__.__qualname__)
         # Use the same system object in all tests.
         self.system = PaxosSystem(PaxosApplication, 3)

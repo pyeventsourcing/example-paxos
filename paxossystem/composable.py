@@ -47,6 +47,9 @@ SOFTWARE.
 # ProposalID = collections.namedtuple('ProposalID', ['number', 'uid'])
 
 # Replaced ProposalID class, because json package turns namedtuples into a list.
+from random import random
+from time import sleep
+from typing import Any
 
 
 class ProposalID(object):
@@ -107,7 +110,7 @@ class Prepare(PaxosMessage):
     Prepare messages should be broadcast to all Acceptors.
     """
 
-    def __init__(self, from_uid, proposal_id):
+    def __init__(self, from_uid: str, proposal_id: ProposalID):
         self.from_uid = from_uid
         self.proposal_id = proposal_id
 
@@ -121,7 +124,7 @@ class Nack(PaxosMessage):
     messages
     """
 
-    def __init__(self, from_uid, proposer_uid, proposal_id, promised_proposal_id):
+    def __init__(self, from_uid: str, proposer_uid: str, proposal_id: ProposalID, promised_proposal_id: ProposalID):
         self.from_uid = from_uid
         self.proposal_id = proposal_id
         self.proposer_uid = proposer_uid
@@ -135,7 +138,8 @@ class Promise(PaxosMessage):
     """
 
     def __init__(
-        self, from_uid, proposer_uid, proposal_id, last_accepted_id, last_accepted_value
+        self, from_uid: str, proposer_uid: str, proposal_id: ProposalID, last_accepted_id: ProposalID,
+            last_accepted_value: Any
     ):
         self.from_uid = from_uid
         self.proposer_uid = proposer_uid
@@ -149,7 +153,7 @@ class Accept(PaxosMessage):
     Accept messages should be broadcast to all Acceptors
     """
 
-    def __init__(self, from_uid, proposal_id, proposal_value):
+    def __init__(self, from_uid: str, proposal_id: ProposalID, proposal_value: Any):
         self.from_uid = from_uid
         self.proposal_id = proposal_id
         self.proposal_value = proposal_value
@@ -160,7 +164,7 @@ class Accepted(PaxosMessage):
     Accepted messages should be sent to all Learners
     """
 
-    def __init__(self, from_uid, proposal_id, proposal_value):
+    def __init__(self, from_uid: str, proposal_id: ProposalID, proposal_value: Any):
         self.from_uid = from_uid
         self.proposal_id = proposal_id
         self.proposal_value = proposal_value
@@ -478,11 +482,11 @@ class PaxosInstance(Proposer, Acceptor, Learner):
         Learner.__init__(self, network_uid, quorum_size)
 
     def receive_prepare(self, msg):
-        self.observe_proposal(msg.proposal_id)
+        # self.observe_proposal(msg.proposal_id)
         return super(PaxosInstance, self).receive_prepare(msg)
 
     def receive_accept(self, msg):
-        self.observe_proposal(msg.proposal_id)
+        # self.observe_proposal(msg.proposal_id)
         return super(PaxosInstance, self).receive_accept(msg)
 
     def receive_resolution(self, msg: Resolution):

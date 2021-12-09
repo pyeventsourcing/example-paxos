@@ -9,6 +9,7 @@ class PaxosLogged(AggregateEvent[Aggregate]):
 
 class CommandForwarded(AggregateEvent[Aggregate]):
     cmd_text: str
+    elected_leader: str
 
 
 class LeadershipElection(PaxosAggregate):

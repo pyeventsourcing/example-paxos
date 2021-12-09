@@ -32,7 +32,7 @@ class PaxosApplication(CachingApplication[Aggregate], ProcessApplication[Aggrega
     def __init__(self, env: Optional[Mapping[str, str]] = None) -> None:
         super().__init__(env)
         self.assume_leader = False
-        self.is_elected_leader = None
+        self.announce_nacks = False
         self.announce_resolutions = False
 
     def register_transcodings(self, transcoder: Transcoder) -> None:
@@ -63,6 +63,7 @@ class PaxosApplication(CachingApplication[Aggregate], ProcessApplication[Aggrega
             originator_id=key,
             quorum_size=quorum_size,
             network_uid=self.name,
+            announce_nacks=self.announce_nacks,
             announce_resolution=self.announce_resolutions,
         )
         msg = paxos_aggregate.propose_value(value, assume_leader=assume_leader)
@@ -82,10 +83,10 @@ class PaxosApplication(CachingApplication[Aggregate], ProcessApplication[Aggrega
         by starting or continuing a paxos aggregate in this application.
         """
         if isinstance(domain_event, PaxosAggregate.MessageAnnounced):
-            paxos, resolution_msg = self.process_message_announced(domain_event)
+            paxos, resolution_msg = self.process_announced_message(domain_event)
             process_event.collect_events(paxos)
 
-    def process_message_announced(
+    def process_announced_message(
         self, domain_event: PaxosAggregate.MessageAnnounced, paxos_cls: Type[PaxosAggregate] = PaxosAggregate
     ):
         # Get or create aggregate.
@@ -97,6 +98,7 @@ class PaxosApplication(CachingApplication[Aggregate], ProcessApplication[Aggrega
                 originator_id=domain_event.originator_id,
                 quorum_size=quorum_size,
                 network_uid=self.name,
+                announce_nacks=self.announce_nacks,
                 announce_resolution=self.announce_resolutions,
             )
         # Absolutely make sure the participant aggregates aren't getting confused.

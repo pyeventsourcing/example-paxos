@@ -1,10 +1,12 @@
 from copy import deepcopy
-from typing import Any, Set, Dict
+from typing import Any, Optional, Set, Dict
 from uuid import UUID
 
 from eventsourcing.domain import Aggregate
 
 from paxossystem.composable import (
+    Nack,
+    Promise,
     ProposalStatus,
     PaxosInstance,
     PaxosMessage,
@@ -23,6 +25,7 @@ class PaxosAggregate(Aggregate):
         originator_id: UUID,
         quorum_size: int,
         network_uid: str,
+        announce_nacks: bool,
         announce_resolution: bool,
     ) -> "PaxosAggregate":
         """
@@ -34,6 +37,7 @@ class PaxosAggregate(Aggregate):
             id=originator_id,
             quorum_size=quorum_size,
             network_uid=network_uid,
+            announce_nacks=announce_nacks,
             announce_resolution=announce_resolution,
         )
 
@@ -44,12 +48,14 @@ class PaxosAggregate(Aggregate):
 
         quorum_size: int
         network_uid: str
+        announce_nacks: bool
         announce_resolution: bool
 
     def __init__(
         self,
         quorum_size: int,
         network_uid: str,
+        announce_nacks: bool,
         announce_resolution: bool,
         **kwargs: Any
     ):
@@ -62,6 +68,7 @@ class PaxosAggregate(Aggregate):
         self.proposals: Dict[str, ProposalStatus] = {}
         self.acceptors: Dict[str, str] = {}
         self.final_value: Any = None
+        self.announce_nacks = announce_nacks
         self.announce_resolution = announce_resolution
         super(PaxosAggregate, self).__init__(**kwargs)
 
@@ -85,6 +92,7 @@ class PaxosAggregate(Aggregate):
         """
         resolution_msg = None
         paxos = self.paxos_instance
+        msg: Optional[PaxosMessage]
         while msg:
             msg = paxos.receive(msg)
             if msg:
@@ -93,7 +101,14 @@ class PaxosAggregate(Aggregate):
                         self.announce(msg)
                     resolution_msg = msg
                     msg = None
-                else:
+                if isinstance(msg, Nack):
+                    if self.announce_nacks:
+                        self.announce(msg)
+                    else:
+                        msg = None
+                elif isinstance(msg, (Promise)) and msg.proposal_id.uid == self.network_uid:
+                    pass
+                elif msg is not None:
                     self.announce(msg)
         self.setattrs_from_paxos(paxos)
 

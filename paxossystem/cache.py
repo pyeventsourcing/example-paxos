@@ -88,6 +88,7 @@ class LRUCache(Cache[_S, _T]):
                 raise KeyError
 
     def put(self, key: _S, value: _T) -> Optional[Any]:
+        evicted_key = None
         evicted_value = None
         with self.lock:
             link = self.cache.get(key)
@@ -114,11 +115,11 @@ class LRUCache(Cache[_S, _T]):
                 # clean-up code (i.e. __del__) from running while we're
                 # still adjusting the links.
                 self.root = oldroot[self.NEXT]
-                oldkey = self.root[self.KEY]
+                evicted_key = self.root[self.KEY]
                 evicted_value = self.root[self.RESULT]
                 self.root[self.KEY] = self.root[self.RESULT] = None
                 # Now update the cache dictionary.
-                del self.cache[oldkey]
+                del self.cache[evicted_key]
                 # Save the potentially reentrant cache[key] assignment
                 # for last, after the root and links have been put in
                 # a consistent state.
@@ -131,7 +132,7 @@ class LRUCache(Cache[_S, _T]):
                 # Use the __len__() bound method instead of the len() function
                 # which could potentially be wrapped in an lru_cache itself.
                 self.full = self.cache.__len__() >= self.maxsize
-        return evicted_value
+        return evicted_key, evicted_value
 
 
 class CachedRepository(Repository[TAggregate]):
