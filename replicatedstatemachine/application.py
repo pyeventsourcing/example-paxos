@@ -24,8 +24,9 @@ from paxossystem.cache import Cache, LRUCache
 from paxossystem.composable import Accept, Accepted, Nack, Prepare, Promise, Resolution
 from replicatedstatemachine.domainmodel import (
     CommandForwarded,
+    ElectionLogged,
     LeadershipElection,
-    PaxosLogged,
+    CommandLogged,
 )
 from replicatedstatemachine.eventsourcedlog import EventSourcedLog
 from replicatedstatemachine.exceptions import (
@@ -147,14 +148,18 @@ class StateMachineReplica(PaxosApplication):
         else:
             self.futures = Cache()
 
-        # Construct log of paxos aggregates.
-        self.paxos_log: EventSourcedLog[PaxosLogged] = EventSourcedLog(
-            self.events, uuid5(NAMESPACE_URL, "/paxoslog"), PaxosLogged
+        # Construct log of leadership election aggregates.
+        self.election_log: EventSourcedLog[ElectionLogged] = EventSourcedLog(
+            self.events, uuid5(NAMESPACE_URL, "/election_log"), ElectionLogged
+        )
+        # Construct log of command proposal aggregates.
+        self.command_log: EventSourcedLog[CommandLogged] = EventSourcedLog(
+            self.events, uuid5(NAMESPACE_URL, "/command_log"), CommandLogged
         )
         self.next_leadership_election_timer = None
         self.disestablish_leadership_timer = None
-        self.highest_leadership_election_round = 0
         self.elected_leader_uid = None
+        self.probability_leader_fails_to_propose_reelection = 0
 
     @property
     def is_elected_leader(self) -> bool:
@@ -168,18 +173,19 @@ class StateMachineReplica(PaxosApplication):
                 self.disestablish_leadership_timer.cancel()
         super().close()
 
-    def maybe_propose_leader(self, election_round: int):
-        if random() >= 0:
+    def propose_reelection(self, election_round: int):
+        if random() >= self.probability_leader_fails_to_propose_reelection:
             self.propose_leader(election_round)
 
     def propose_leader(self, election_round=1):
+        # _print("Proposing leader", self.name)
         with self.processing_lock:
-            if election_round > self.highest_leadership_election_round:
+            if election_round > self.get_highest_recorded_election_round():
                 # Start Paxos aggregate for leadership election.
                 proposal_key = create_leadership_proposal_id_from_round(
                     round=election_round
                 )
-                proposal_delays = list(range(self.num_participants))
+                proposal_delays = list(range(1, self.num_participants + 1))
                 shuffle(proposal_delays)
                 paxos_aggregate = self.start_paxos(
                     key=proposal_key,
@@ -235,11 +241,11 @@ class StateMachineReplica(PaxosApplication):
                 # Propose the command.
                 with self.processing_lock:
                     # Create and log a Paxos aggregate.
-                    paxos_logged = self.paxos_log.trigger_event()
+                    command_logged = self.command_log.trigger_event()
                     proposal_key = create_command_proposal_id_from_round(
-                        round=paxos_logged.originator_version
+                        round=command_logged.originator_version
                     )
-                    paxos_aggregate = self.start_paxos(
+                    command_proposal = self.start_paxos(
                         key=proposal_key,
                         value=[cmd_text, None],
                         assume_leader=self.assume_leader or self.is_elected_leader,
@@ -250,14 +256,14 @@ class StateMachineReplica(PaxosApplication):
 
                     # Save the Paxos aggregate and logged event.
                     try:
-                        self.save(paxos_aggregate, paxos_logged)
+                        self.save(command_proposal, command_logged)
 
                     except IntegrityError:
                         # Aggregate or logged event already exists.
-                        msg = f"{self.name}: Rejecting command for round {paxos_logged.originator_version}"
-                        if list(self.events.get(paxos_aggregate.id)):
+                        msg = f"{self.name}: Rejecting command for round {command_logged.originator_version}"
+                        if list(self.events.get(command_proposal.id)):
                             msg += (
-                                f": Already have paxos aggregate: {paxos_aggregate.id}"
+                                f": Already have paxos aggregate: {command_proposal.id}"
                             )
                         error = CommandRejected(msg)
 
@@ -265,7 +271,7 @@ class StateMachineReplica(PaxosApplication):
                         self.set_future_exception(future, error)
 
                         # Evict the future from the cache.
-                        self.get_command_future(paxos_aggregate.id, evict=True)
+                        self.get_command_future(command_proposal.id, evict=True)
 
         else:
             # Execute the command immediately and save results.
@@ -289,6 +295,7 @@ class StateMachineReplica(PaxosApplication):
         Processes paxos "message announced" events of other applications
         by starting or continuing a paxos aggregate in this application.
         """
+        # _print(self.name, "processing", domain_event, "from", process_event.tracking.application_name)
         if isinstance(domain_event, CommandForwarded):
             print("Processing forwarded command")
             # Was this command forwarded to us?
@@ -296,27 +303,26 @@ class StateMachineReplica(PaxosApplication):
                 # Are we still the elected leader?
                 if self.is_elected_leader:
                     # Start a Paxos instance.
-                    paxos_logged = self.paxos_log.trigger_event()
+                    paxos_logged = self.command_log.trigger_event()
                     proposal_key = create_command_proposal_id_from_round(
                         round=paxos_logged.originator_version
                     )
-                    paxos_aggregate = self.start_paxos(
+                    command_proposal = self.start_paxos(
                         proposal_key,
                         [domain_event.cmd_text, domain_event.originator_id],
                         True,
                     )
-                    process_event.collect_events(paxos_aggregate, paxos_logged)
+                    process_event.collect_events(command_proposal, paxos_logged)
                 else:
                     # Forward it to the new elected leader.
-                    process_event.collect_events(
-                        CommandForwarded(
-                            originator_id=domain_event.originator_id,
-                            originator_version=domain_event.originator_version + 1,
-                            timestamp=CommandForwarded.create_timestamp(),
-                            cmd_text=domain_event.cmd_text,
-                            elected_leader=self.elected_leader_uid,
-                        )
+                    command_forwarded = CommandForwarded(
+                        originator_id=domain_event.originator_id,
+                        originator_version=domain_event.originator_version + 1,
+                        timestamp=CommandForwarded.create_timestamp(),
+                        cmd_text=domain_event.cmd_text,
+                        elected_leader=self.elected_leader_uid,
                     )
+                    process_event.collect_events(command_forwarded)
 
         elif isinstance(domain_event, LeadershipElection.MessageAnnounced):
             if (
@@ -327,7 +333,7 @@ class StateMachineReplica(PaxosApplication):
                 #     raise Exception("Number too high....")
                 return
 
-            paxos_aggregate, resolution_msg = self.process_announced_message(
+            leadership_election, resolution_msg = self.process_announced_message(
                 domain_event, LeadershipElection
             )
 
@@ -335,41 +341,47 @@ class StateMachineReplica(PaxosApplication):
             # print_paxos_msg_summary(
             #     "Electing leader:", self.name[-1], " <- ", domain_event.msg
             # )
-            # for pending in paxos_aggregate.pending_events:
+            # for pending in leadership_election.pending_events:
             #     if isinstance(pending, LeadershipElection.MessageAnnounced):
             #         print_paxos_msg_summary(
             #             "Electing leader:", self.name[-1], " ->  ", pending.msg
             #         )
 
-            process_event.collect_events(paxos_aggregate)
+            process_event.collect_events(leadership_election)
             if resolution_msg:
                 # Set elected leader.
-                network_uid = paxos_aggregate.final_value[0]
+                network_uid = leadership_election.final_value[0]
                 self.elected_leader_uid = network_uid
 
-                election_round = paxos_aggregate.final_value[1]
-                proposal_delays = paxos_aggregate.final_value[2]
-                if election_round > self.highest_leadership_election_round:
-                    # Todo: Persist this using an event-sourced log.
-                    self.highest_leadership_election_round = election_round
+                election_round = leadership_election.final_value[1]
+                proposal_delays = leadership_election.final_value[2]
+                if election_round > self.get_highest_recorded_election_round():
+                    election_logged = self.election_log.trigger_event(election_round)
+                    process_event.collect_events(election_logged)
 
                     if self.disestablish_leadership_timer:
                         self.disestablish_leadership_timer.cancel()
 
                     if self.name == network_uid:
                         _print("Elected leader:", self.name, "round", election_round)
+                        timer_delay = self.leader_lease
+                        # _print("Resetting timer for proposing re-election of leader, delay", timer_delay)
                         if self.next_leadership_election_timer:
                             self.next_leadership_election_timer.cancel()
                         self.next_leadership_election_timer = Timer(
-                            self.leader_lease - self.num_participants,
-                            self.maybe_propose_leader,
+                            timer_delay,
+                            self.propose_reelection,
                             args=(election_round + 1,),
                         )
                         self.next_leadership_election_timer.start()
                     else:
                         # _print("Setting disestablish leadership timer for round", election_round, "on", self.name)
+                        timer_delay = (
+                            self.leader_lease + proposal_delays[int(self.name[-1])]
+                        )
+                        # _print("Setting timer for proposing election of non-leader, delay", timer_delay)
                         self.disestablish_leadership_timer = Timer(
-                            self.leader_lease - proposal_delays[int(self.name[-1])],
+                            timer_delay,
                             self.propose_leader,
                             args=(election_round + 1,),
                         )
@@ -391,7 +403,7 @@ class StateMachineReplica(PaxosApplication):
             # Decide if we have a new Paxos aggregate.
             if len(paxos_aggregate.pending_events) == paxos_aggregate.version:
                 # Add new paxos aggregate to the paxos log.
-                paxos_logged = self.paxos_log.trigger_event()
+                paxos_logged = self.command_log.trigger_event()
                 expected_paxos_id = create_command_proposal_id_from_round(
                     paxos_logged.originator_version
                 )
@@ -548,17 +560,25 @@ class StateMachineReplica(PaxosApplication):
         method by calling :func:`prompt_followers` whenever new events have just
         been saved.
         """
-        for new_event in new_events:
-            if isinstance(new_event, PaxosAggregate.MessageAnnounced):
-                print(
-                    self.name,
-                    new_event.originator_id,
-                    "saved",
-                    new_event.msg,
-                    new_event.originator_id,
-                    new_event.originator_version,
-                )
+        # for new_event in new_events:
+        #     # _print(self.name, "notifying", new_event)
+        #     if isinstance(new_event, PaxosAggregate.MessageAnnounced):
+        #         print(
+        #             self.name,
+        #             new_event.originator_id,
+        #             "saved",
+        #             new_event.msg,
+        #             new_event.originator_id,
+        #             new_event.originator_version,
+        #         )
         super().notify(new_events)
+
+    def get_highest_recorded_election_round(self) -> int:
+        last_logged = self.election_log.get_last()
+        if last_logged is not None:
+            return last_logged.originator_version
+        else:
+            return 0
 
 
 def create_command_proposal_id_from_round(round: int) -> UUID:

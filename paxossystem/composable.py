@@ -124,7 +124,13 @@ class Nack(PaxosMessage):
     messages
     """
 
-    def __init__(self, from_uid: str, proposer_uid: str, proposal_id: ProposalID, promised_proposal_id: ProposalID):
+    def __init__(
+        self,
+        from_uid: str,
+        proposer_uid: str,
+        proposal_id: ProposalID,
+        promised_proposal_id: ProposalID,
+    ):
         self.from_uid = from_uid
         self.proposal_id = proposal_id
         self.proposer_uid = proposer_uid
@@ -138,8 +144,12 @@ class Promise(PaxosMessage):
     """
 
     def __init__(
-        self, from_uid: str, proposer_uid: str, proposal_id: ProposalID, last_accepted_id: ProposalID,
-            last_accepted_value: Any
+        self,
+        from_uid: str,
+        proposer_uid: str,
+        proposal_id: ProposalID,
+        last_accepted_id: ProposalID,
+        last_accepted_value: Any,
     ):
         self.from_uid = from_uid
         self.proposer_uid = proposer_uid

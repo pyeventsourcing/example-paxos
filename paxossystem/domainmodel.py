@@ -106,7 +106,10 @@ class PaxosAggregate(Aggregate):
                         self.announce(msg)
                     else:
                         msg = None
-                elif isinstance(msg, (Promise)) and msg.proposal_id.uid == self.network_uid:
+                elif (
+                    isinstance(msg, (Promise))
+                    and msg.proposal_id.uid == self.network_uid
+                ):
                     pass
                 elif msg is not None:
                     self.announce(msg)

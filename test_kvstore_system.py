@@ -1,6 +1,7 @@
 import random
 import sys
 from concurrent.futures import TimeoutError
+from itertools import count
 from queue import Queue
 from threading import Thread
 from time import sleep, time
@@ -15,8 +16,11 @@ from eventsourcing.utils import retry
 
 from keyvaluestore.application import KeyValueReplica
 from paxossystem.domainmodel import PaxosAggregate
-from replicatedstatemachine.application import CommandFuture, StateMachineReplica, \
-    create_command_proposal_id_from_round
+from replicatedstatemachine.application import (
+    CommandFuture,
+    StateMachineReplica,
+    create_command_proposal_id_from_round,
+)
 from paxossystem.system import PaxosSystem
 from replicatedstatemachine.exceptions import CommandFutureEvicted, CommandRejected
 from test_paxos_system import drop_postgres_table
@@ -159,7 +163,6 @@ class TestSystemSingleThreaded(KeyValueSystemTestCase):
 
         apps[1].propose_command(f'HSET myhash field "Hello World"').result(timeout=1)
 
-
     def test_propose_leader(self):
 
         apps = [
@@ -186,30 +189,63 @@ class TestSystemSingleThreaded(KeyValueSystemTestCase):
             for i in range(self.num_participants)
         ]
 
-        # Propose leader.
-        apps[0].propose_leader()
-
-        # Wait for leadership election to complete.
+        # Configure leadership election mechanism.
         for app in apps:
-            self.assert_elected_leader_uid(app, apps[0].name)
+            app.probability_leader_fails_to_propose_reelection = 0.5
+            app.leader_lease = self.num_participants
+
+        # Propose leader.
+        # apps[0].propose_leader()
+        # sleep(1)
+        apps[1].propose_leader()
+
+        # # Wait for leadership election to complete.
+        # for app in apps:
+        #     self.assert_elected_leader_uid(app, apps[0].name)
 
         error_count = 0
         result_count = 0
 
-        for i in range(1000):
+        started = time()
+        run_for_duration = 60
+
+        last_period_started = started
+
+        for i in count():
             app = random.choice(apps)
             # app = apps[1]
             # print("Proposing cmd to", app.name)
             try:
-                app.propose_command(f'HSET myhash{i} field "Hello World"').result(timeout=1)
+                app.propose_command(f'HSET myhash{i} field "Hello World"').result(
+                    timeout=1
+                )
             except TimeoutError as e:
                 error_count += 1
-                print(f"Timed out waiting for command result {i}.", "Error count:", error_count)
+                print(
+                    f"Timed out waiting for command result {i}.",
+                    "Error count:",
+                    error_count,
+                )
             else:
                 result_count += 1
-                if result_count % 50 == 0:
-                    print(f"Got result from app {app.name}.", "Results:", result_count, "Error:", error_count)
-                sleep(0.01)
+                period = 50
+                if result_count % period == 0:
+
+                    last_period_ended = time()
+                    print(
+                        f"Got result from app {app.name}.",
+                        "Results:",
+                        result_count,
+                        "Errors:",
+                        error_count,
+                        "Rate:",
+                        f"{period / (last_period_ended - last_period_started):.2f}",
+                    )
+                    last_period_started = last_period_ended
+
+            # End run after specified duration.
+            if time() - started > run_for_duration:
+                break
 
 
 class TestSystemSingleThreadedWithSQLite(TestWithSQLite, TestSystemSingleThreaded):
@@ -224,6 +260,9 @@ class TestSystemSingleThreadedWithPostgreSQL(
 
 class TestSystemMultiThreaded(TestSystemSingleThreaded):
     runner_class = MultiThreadedRunner
+
+    def test_leader_lease(self):
+        super().test_leader_lease()
 
 
 class TestSystemMultiThreadedWithSQLite(TestWithSQLite, TestSystemMultiThreaded):
@@ -248,7 +287,7 @@ class TestPerformanceSingleThreaded(KeyValueSystemTestCase):
         ]
 
         period = self.period
-        n = period * 10
+        n = period * 3
 
         started_times = []
         finished_times = []
@@ -470,7 +509,7 @@ class TestPerformanceMultiThreaded(KeyValueSystemTestCase):
         log_counts = []
         first_log_count = None
         for app in apps:
-            log_count = len(list(app.paxos_log.get()))
+            log_count = len(list(app.command_log.get()))
             print(f"Application {app.name} has {log_count} items in log")
             log_counts.append(log_count)
             if first_log_count is None:
@@ -478,7 +517,7 @@ class TestPerformanceMultiThreaded(KeyValueSystemTestCase):
             else:
                 self.assertEqual(first_log_count, log_count, app.name)
 
-        for paxos_logged in apps[0].paxos_log.get():
+        for paxos_logged in apps[0].command_log.get():
             aggregate_id = create_command_proposal_id_from_round(
                 paxos_logged.originator_version
             )

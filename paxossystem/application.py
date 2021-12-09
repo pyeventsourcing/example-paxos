@@ -87,7 +87,9 @@ class PaxosApplication(CachingApplication[Aggregate], ProcessApplication[Aggrega
             process_event.collect_events(paxos)
 
     def process_announced_message(
-        self, domain_event: PaxosAggregate.MessageAnnounced, paxos_cls: Type[PaxosAggregate] = PaxosAggregate
+        self,
+        domain_event: PaxosAggregate.MessageAnnounced,
+        paxos_cls: Type[PaxosAggregate] = PaxosAggregate,
     ):
         # Get or create aggregate.
         try:
