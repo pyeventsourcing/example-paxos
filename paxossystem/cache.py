@@ -1,17 +1,17 @@
 from copy import deepcopy
 from threading import RLock
-from typing import Any, Dict, Generic, Optional, TypeVar
+from typing import Any, Dict, Generic, Optional, TypeVar, List
 from uuid import UUID
 
 from eventsourcing.application import (
     Application,
-    ProcessEvent,
+    ProcessingEvent,
     ProjectorFunctionType,
     Repository,
     mutate_aggregate,
 )
 from eventsourcing.domain import AggregateEvent, Snapshot, TAggregate
-from eventsourcing.persistence import EventStore
+from eventsourcing.persistence import EventStore, Recording
 from eventsourcing.utils import strtobool
 
 _S = TypeVar("_S")
@@ -201,9 +201,9 @@ class CachingApplication(Application[TAggregate]):
             fastforward=strtobool(self.env.get(self.AGGREGATE_CACHE_FASTFORWARD, "y")),
         )
 
-    def record(self, process_event: ProcessEvent) -> Optional[int]:
-        returning = super().record(process_event)
-        for aggregate_id, aggregate in process_event.aggregates.items():
+    def _record(self, processing_event: ProcessingEvent) -> List[Recording]:
+        recordings = super()._record(processing_event)
+        for aggregate_id, aggregate in processing_event.aggregates.items():
             if self.repository.cache:
                 self.repository.cache.put(aggregate_id, aggregate)
-        return returning
+        return recordings

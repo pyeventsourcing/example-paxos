@@ -1,35 +1,40 @@
-import random
+import gc
+import resource
 import sys
-from concurrent.futures import TimeoutError
+import tracemalloc
+from concurrent.futures import ThreadPoolExecutor
 from itertools import count
 from queue import Queue
-from threading import Thread
+from threading import Event, Thread
 from time import sleep, time
-from typing import Dict, Type, cast
+from typing import Dict, Type, cast, Optional
 from unittest import TestCase
 
 import eventsourcing.utils
 from eventsourcing.postgres import PostgresDatastore
 from eventsourcing.system import MultiThreadedRunner, Runner, SingleThreadedRunner
+from eventsourcing.tests.postgres_utils import drop_postgres_table
 from eventsourcing.tests.ramdisk import tmpfile_uris
 from eventsourcing.utils import retry
 
 from keyvaluestore.application import KeyValueReplica
 from paxossystem.domainmodel import PaxosAggregate
 from replicatedstatemachine.application import (
-    CommandFuture,
     StateMachineReplica,
     create_command_proposal_id_from_round,
 )
+from replicatedstatemachine.commandfutures import CommandFuture
 from paxossystem.system import PaxosSystem
-from replicatedstatemachine.exceptions import CommandFutureEvicted, CommandRejected
-from test_paxos_system import drop_postgres_table
+from replicatedstatemachine.exceptions import CommandError, CommandTimeoutError
 
 
 class KeyValueSystemTestCase(TestCase):
     persistence_module: str = "eventsourcing.popo"
     runner_class: Type[Runner] = SingleThreadedRunner
     num_participants = 3
+    pool_size = 5
+    max_overflow = 0
+    aggregate_cache_max_size = 500
 
     def setUp(self):
         eventsourcing.utils._topic_cache.clear()
@@ -37,7 +42,7 @@ class KeyValueSystemTestCase(TestCase):
         self.runner = self.create_runner(
             {
                 "PERSISTENCE_MODULE": self.persistence_module,
-                "AGGREGATE_CACHE_MAXSIZE": 500,
+                "AGGREGATE_CACHE_MAXSIZE": self.aggregate_cache_max_size,
                 "AGGREGATE_CACHE_FASTFORWARD": "n",
                 # "COMPRESSOR_TOPIC": "zlib"
             }
@@ -65,6 +70,42 @@ class KeyValueSystemTestCase(TestCase):
         else:
             return False
 
+    def loop_malloc(self, stopped_event: Event):
+        tracemalloc.start()
+        while not stopped_event.is_set():
+            self.print_malloc()
+            sleep(1)
+
+    def print_malloc(self):
+
+        snapshot = tracemalloc.take_snapshot()
+
+        # top_stats = snapshot2.compare_to(snapshot1, 'lineno')
+        top_stats = snapshot.statistics('lineno')
+        maxrss = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+        print(f"[ Top 10 ] Max RSS", maxrss)
+        count = 0
+        for stat in top_stats:
+            count += 1
+            stat_str = str(stat)
+            # if "decoder" not in stat_str:
+            #     continue
+
+            # if "eventsourcing" not in stat_str:
+            #     break
+            # else:
+            #     stat_str = stat_str.replace(
+            #         "/Users/john/PyCharmProjects/eventsourcing/", ""
+            #     )
+            print(stat_str)
+            if count > 10:
+                break
+
+    def start_tracemalloc_thread(self):
+        self.tracemalloc_thread_stopped = Event()
+        self.tracemalloc_thread = Thread(target=self.loop_malloc, args=(self.tracemalloc_thread_stopped, ), daemon=True)
+        self.tracemalloc_thread.start()
+
 
 class TestWithSQLite(KeyValueSystemTestCase):
     persistence_module = "eventsourcing.sqlite"
@@ -90,6 +131,9 @@ class TestWithPostgreSQL(KeyValueSystemTestCase):
         env["POSTGRES_PORT"] = "5432"
         env["POSTGRES_USER"] = "eventsourcing"
         env["POSTGRES_PASSWORD"] = "eventsourcing"
+        env["POSTGRES_POOL_SIZE"] = str(self.pool_size)
+        env["POSTGRES_POOL_MAX_OVERFLOW"] = str(self.max_overflow)
+        env["POSTGRES_POOL_MAX_AGE"] = "30"
         return super().create_runner(env)
 
     def setUp(self):
@@ -105,14 +149,15 @@ class TestWithPostgreSQL(KeyValueSystemTestCase):
             drop_postgres_table(datastore, f"{app_name}{i}_events")
             drop_postgres_table(datastore, f"{app_name}{i}_snapshots")
             drop_postgres_table(datastore, f"{app_name}{i}_tracking")
-        datastore.close_all_connections()
+        datastore.close()
         super().setUp()
 
 
 class TestSystemSingleThreaded(KeyValueSystemTestCase):
-    @retry((AssertionError, CommandRejected), max_attempts=100, wait=0.05)
     def assert_result(self, app, cmd_text, expected_result):
-        self.assertEqual(app.propose_command(cmd_text).result(), expected_result)
+        future = app.propose_command(cmd_text)
+        result = future.result(timeout=1)
+        self.assertEqual(result, expected_result)
 
     def test_propose_commands_no_leader(self):
 
@@ -179,11 +224,18 @@ class TestSystemSingleThreaded(KeyValueSystemTestCase):
         for app in apps:
             self.assert_elected_leader_uid(app, apps[0].name)
 
-    @retry(AssertionError, max_attempts=100, wait=0.01)
+    @retry(AssertionError, max_attempts=10, wait=0.1)
     def assert_elected_leader_uid(self, app: StateMachineReplica, expected_value):
-        self.assertEqual(app.elected_leader_uid, expected_value)
+        if app.elected_leader_uid != expected_value:
+            raise AssertionError(app.elected_leader_uid)
 
-    def test_leader_lease(self):
+    @retry(AssertionError, max_attempts=10, wait=0.1)
+    def assert_leader_is_elected(self, app: StateMachineReplica):
+        if not app.elected_leader_uid:
+            raise AssertionError(app.elected_leader_uid)
+        print(app.name, "thinks", app.elected_leader_uid, "is leader")
+
+    def test_leader_lease(self, run_for_duration=5, num_clients=4):
         apps = [
             self.get_app(f"{KeyValueReplica.__name__}{i}")
             for i in range(self.num_participants)
@@ -191,82 +243,133 @@ class TestSystemSingleThreaded(KeyValueSystemTestCase):
 
         # Configure leadership election mechanism.
         for app in apps:
-            app.probability_leader_fails_to_propose_reelection = 0.5
-            app.leader_lease = self.num_participants
+            app.probability_leader_fails_to_propose_reelection = 0
+            app.leader_lease = 10
 
         # Propose leader.
-        # apps[0].propose_leader()
-        # sleep(1)
-        apps[1].propose_leader()
+        propose_leader_i = 0
+        apps[propose_leader_i].propose_leader()
 
-        # # Wait for leadership election to complete.
-        # for app in apps:
-        #     self.assert_elected_leader_uid(app, apps[0].name)
+        # Wait for leadership election to complete.
+        for app in apps:
+            self.assert_leader_is_elected(app)
+            # self.assert_elected_leader_uid(app, apps[propose_leader_i].name)
 
+        num_clients = len(apps) * 1
+
+        started = time()
+        last_period_started = started
         error_count = 0
         result_count = 0
 
-        started = time()
-        run_for_duration = 60
+        # sleep(run_for_duration)
+        # return
 
-        last_period_started = started
+        write_error = Event()
+        finished = Event()
 
-        for i in count():
-            app = random.choice(apps)
-            # app = apps[1]
-            # print("Proposing cmd to", app.name)
-            try:
-                app.propose_command(f'HSET myhash{i} field "Hello World"').result(
-                    timeout=1
-                )
-            except TimeoutError as e:
-                error_count += 1
-                print(
-                    f"Timed out waiting for command result {i}.",
-                    "Error count:",
-                    error_count,
-                )
-            else:
-                result_count += 1
-                period = 50
-                if result_count % period == 0:
+        counter = count()
 
-                    last_period_ended = time()
+        def write(app_i):
+            nonlocal result_count, error_count, last_period_started
+            while not write_error.is_set() and not finished.is_set():
+                i = next(counter)
+
+                # app = random.choice(apps)
+                app = apps[app_i]
+
+                try:
+                    future = app.propose_command(f'HSET myhash{i} field "Hello World"')
+                    future.result(timeout=5)
+                except CommandTimeoutError:
+                    error_count += 1
                     print(
-                        f"Got result from app {app.name}.",
-                        "Results:",
-                        result_count,
-                        "Errors:",
+                        f"Timed out waiting for command result {i}.",
+                        "Error count:",
                         error_count,
-                        "Rate:",
-                        f"{period / (last_period_ended - last_period_started):.2f}",
                     )
-                    last_period_started = last_period_ended
+                    if error_count > 50:
+                        write_error.set()
+                        finished.set()
+                except CommandError as e:
+                    error_count += 1
+                    print(
+                        f"Command error for {i}.",
+                        "Error count:",
+                        error_count,
+                        e
+                    )
+                    write_error.set()
+                    finished.set()
+                    raise e
+                else:
+                    result_count += 1
+                    period = 50
+                    if result_count % period == 0:
 
-            # End run after specified duration.
-            if time() - started > run_for_duration:
-                break
+                        last_period_ended = time()
+                        print(
+                            f"Got result from app {app.name} in",
+                            f"{future.duration:.6f}",
+                            "Results:",
+                            result_count,
+                            "Errors:",
+                            error_count,
+                            "Rate:",
+                            f"{period / (last_period_ended - last_period_started):.2f}",
+                        )
+                        last_period_started = last_period_ended
+
+                # End run after specified duration.
+                if isinstance(self.runner, MultiThreadedRunner) and self.runner.has_errored.is_set():
+                    finished.set()
+
+                if time() - started > run_for_duration:
+                    finished.set()
+
+            if finished.is_set():
+                print("Thread exiting, finished set!")
+            if write_error.is_set():
+                print("Thread existing, write error set!")
+
+        thread_pool = ThreadPoolExecutor(max_workers=num_clients)
+        for i in range(num_clients):
+            thread_pool.submit(write, app_i=(i % len(apps)))
+
+        try:
+            finished.wait(run_for_duration)
+        finally:
+            finished.set()
+
+        thread_pool.shutdown(cancel_futures=True)
+
+        self.assertFalse(write_error.is_set())
 
 
 class TestSystemSingleThreadedWithSQLite(TestWithSQLite, TestSystemSingleThreaded):
-    pass
+    def test_leader_lease(self):
+        super().test_leader_lease()
 
 
 class TestSystemSingleThreadedWithPostgreSQL(
     TestWithPostgreSQL, TestSystemSingleThreaded
 ):
-    pass
+    def test_leader_lease(self):
+        super().test_leader_lease()
 
 
 class TestSystemMultiThreaded(TestSystemSingleThreaded):
     runner_class = MultiThreadedRunner
 
     def test_leader_lease(self):
+        assert isinstance(self.runner, MultiThreadedRunner)
         super().test_leader_lease()
 
 
 class TestSystemMultiThreadedWithSQLite(TestWithSQLite, TestSystemMultiThreaded):
-    pass
+
+    def test_leader_lease(self):
+        super().test_leader_lease()
 
 
 class TestSystemMultiThreadedWithPostgreSQL(
@@ -274,6 +377,9 @@ class TestSystemMultiThreadedWithPostgreSQL(
 ):
     def test_propose_leader(self):
         super().test_propose_leader()
+
+    def test_leader_lease(self):
+        super().test_leader_lease()
 
 
 class TestPerformanceSingleThreaded(KeyValueSystemTestCase):
@@ -305,7 +411,7 @@ class TestPerformanceSingleThreaded(KeyValueSystemTestCase):
             future = app.propose_command(cmd_text)
             try:
                 future.result(timeout=1)
-            except TimeoutError:
+            except CommandTimeoutError:
                 raise Exception(
                     f"Command future timed out for '{future.original_cmd_text}'"
                 )
@@ -380,7 +486,7 @@ class TestPerformanceSingleThreadedWithPostgreSQL(
 
 class TestPerformanceMultiThreaded(KeyValueSystemTestCase):
     runner_class = MultiThreadedRunner
-    target_rate = 2
+    target_rate = 100
 
     def test_performance(self):
         eventsourcing.utils._topic_cache.clear()
@@ -408,11 +514,9 @@ class TestPerformanceMultiThreaded(KeyValueSystemTestCase):
             apps[2].elected_leader_uid = apps[0].name
 
             for i in list(range(n + 1)):
-                app = apps[i % self.num_participants]
+                # app = apps[i % self.num_participants]
                 # app = random.choice(apps)
-                # app = apps[0]
-
-                # app.assume_leader = True
+                app = apps[0]
 
                 now = time()
                 started_times.append(now)
@@ -434,14 +538,8 @@ class TestPerformanceMultiThreaded(KeyValueSystemTestCase):
                 i_started: float = future.started
                 try:
                     future.result(timeout=1)
-                except CommandRejected as e:
-                    print("Command rejected:", e, future.original_cmd_text)
-                except CommandFutureEvicted as e:
-                    print("Command future evicted:", e, future.original_cmd_text)
-                except TimeoutError:
-                    raise Exception(
-                        "Timeout waiting for future", future.original_cmd_text
-                    )
+                except CommandError as e:
+                    print("Command error:", e, future.original_cmd_text)
                 i_finished = future.finished
                 timings.append((i_started, i_finished))
                 finished_times.append(i_finished)
@@ -502,7 +600,7 @@ class TestPerformanceMultiThreaded(KeyValueSystemTestCase):
             previous_finished_time = finished_time
 
         sys.stdout.flush()
-        sleep(0.1)
+        sleep(1)
 
         print("Checking paxos logs...")
         has_errors = False
@@ -571,7 +669,7 @@ class TestPerformanceMultiThreaded(KeyValueSystemTestCase):
 class TestPerformanceMultiThreadedWithSQLite(
     TestWithSQLite, TestPerformanceMultiThreaded
 ):
-    target_rate = 40
+    target_rate = 100
 
     def test_performance(self):
         super().test_performance()
@@ -580,7 +678,91 @@ class TestPerformanceMultiThreadedWithSQLite(
 class TestPerformanceMultiThreadedWithPostgreSQL(
     TestWithPostgreSQL, TestPerformanceMultiThreaded
 ):
-    target_rate = 25
+    target_rate = 60
+
+
+class TestMalloc(KeyValueSystemTestCase):
+
+    persistence_module: str = "eventsourcing.popo"
+    runner_class: Type[Runner] = MultiThreadedRunner
+
+    num_participants = 3
+    pool_size = 1
+    max_overflow = 0
+    aggregate_cache_max_size = 100
+
+    def _test_malloc(self):
+        tracemalloc.start()
+
+        apps = [
+            self.get_app(f"{KeyValueReplica.__name__}{i}")
+            for i in range(self.num_participants)
+        ]
+
+        apps[0].propose_leader()
+
+
+        print_period: Optional[int] = None
+
+        def do_run(purpose, run_length):
+            for i in range(run_length):
+
+                if print_period is not None:
+                    if not (i + 1) % print_period:
+                        print(purpose, i + 1)
+
+                # app0 = random.choice(apps)
+                app0 = apps[0]
+
+                future = app0.propose_command(f'HSET myhash{i} field "Hello World"')
+                future.result(timeout=15)
+
+            # for app in apps:
+            #     print("Aggregate cache", app.name, len(app.repository.cache.cache))
+            #     print("Connection pool", app.name, len(app.recorder.datastore.pool._pool))
+
+        # do_run("Warming up", run_length=50)
+
+        snapshot1 = tracemalloc.take_snapshot()
+
+        run_count = 0
+        while True:
+
+            do_run("Running", run_length=10)
+            run_count += 1
+            gc.collect()
+            snapshot2 = tracemalloc.take_snapshot()
+
+            # top_stats = snapshot2.compare_to(snapshot1, 'lineno')
+            top_stats = snapshot2.statistics('lineno')
+
+            print(f"[ Top 10 at {run_count}]")
+            count = 0
+            for stat in top_stats:
+                stat_str = str(stat)
+                # if "decoder" not in stat_str:
+                #     continue
+
+                # if "eventsourcing" not in stat_str:
+                #     break
+                # else:
+                #     stat_str = stat_str.replace(
+                #         "/Users/john/PyCharmProjects/eventsourcing/", ""
+                #     )
+                print(stat_str)
+                count += 1
+                if count > 10:
+                    break
+
+            # snapshot1 = snapshot2
+
+
+class TestMallocWithSQLite(TestWithSQLite, TestMalloc):
+    pass
+
+
+class TestMallocWithPosgreSQL(TestWithPostgreSQL, TestMalloc):
+    pass
 
 
 del KeyValueSystemTestCase

@@ -1,14 +1,22 @@
-class CommandRejected(Exception):
+class CommandError(Exception):
     pass
 
 
-class CommandFutureEvicted(Exception):
+class CommandRejectedError(CommandError):
     pass
 
 
-class CommandExecutionError(Exception):
+class CommandEvictedError(CommandError):
     pass
 
 
-class PaxosProtocolError(Exception):
+class CommandTimeoutError(CommandError):
+    pass
+
+
+class CommandExecutionError(CommandError):
+    pass
+
+
+class PaxosProtocolError(CommandError):
     pass

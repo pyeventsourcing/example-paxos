@@ -79,9 +79,8 @@ class PaxosAggregate(Aggregate):
         assert value is not None, "Not allowed to propose value None"
         paxos = self.paxos_instance
         paxos.leader = assume_leader
-        msg = paxos.propose_value(value)
-        if msg is None:
-            msg = paxos.prepare()
+        msg = paxos.propose_value(value) or paxos.prepare()
+        paxos.receive(msg)
         self.setattrs_from_paxos(paxos)
         self.announce(msg)
         return msg

@@ -1,6 +1,4 @@
 import datetime
-import os
-import random
 import unittest
 from time import time
 from typing import Type, cast
@@ -8,23 +6,11 @@ from uuid import uuid4
 
 import eventsourcing.utils
 from eventsourcing.application import AggregateNotFound
-from eventsourcing.persistence import PersistenceError
-from eventsourcing.postgres import PostgresDatastore
 from eventsourcing.system import MultiThreadedRunner, Runner, SingleThreadedRunner
 from eventsourcing.utils import retry
 
 from paxossystem.application import PaxosApplication
 from paxossystem.system import PaxosSystem
-
-
-def drop_postgres_table(datastore: PostgresDatastore, table_name):
-    try:
-        with datastore.transaction(commit=True) as t:
-            statement = f"DROP TABLE {table_name};"
-            with t.c.cursor() as c:
-                c.execute(statement)
-    except PersistenceError:
-        pass
 
 
 class TestPaxosSystemSingleThreaded(unittest.TestCase):
@@ -35,8 +21,7 @@ class TestPaxosSystemSingleThreaded(unittest.TestCase):
         print(self.__class__.__qualname__)
         # Use the same system object in all tests.
         self.system = PaxosSystem(PaxosApplication, 3)
-        self.runner = SingleThreadedRunner(self.system)
-        # self.runner = MultiThreadedRunner(self.system)
+        self.runner = self.runner_class(self.system)
         self.runner.start()
 
     def tearDown(self):
@@ -89,7 +74,6 @@ class TestPaxosSystemSingleThreaded(unittest.TestCase):
     def get_paxos_app(self, application_name) -> PaxosApplication:
         return cast(PaxosApplication, self.runner.apps.get(application_name))
 
-    @retry((AggregateNotFound, AssertionError), max_attempts=100, wait=0.05, stall=0)
     def assert_final_value(self, process, id, value):
         self.assertEqual(process.get_final_value(id), value)
 
@@ -127,3 +111,7 @@ class TestPaxosSystemSingleThreaded(unittest.TestCase):
 
 class TestPaxosSystemMultiThreaded(TestPaxosSystemSingleThreaded):
     runner_class = MultiThreadedRunner
+
+    @retry((AggregateNotFound, AssertionError), max_attempts=100, wait=0.05, stall=0)
+    def assert_final_value(self, process, id, value):
+        super().assert_final_value(process, id, value)

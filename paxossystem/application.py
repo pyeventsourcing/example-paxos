@@ -1,7 +1,7 @@
 from typing import Any, Mapping, Optional, Type
 from uuid import UUID
 
-from eventsourcing.application import AggregateNotFound, ProcessEvent
+from eventsourcing.application import AggregateNotFound, ProcessingEvent
 from eventsourcing.domain import Aggregate, AggregateEvent, TAggregate
 from eventsourcing.persistence import Transcoder
 from eventsourcing.system import ProcessApplication
@@ -66,8 +66,7 @@ class PaxosApplication(CachingApplication[Aggregate], ProcessApplication[Aggrega
             announce_nacks=self.announce_nacks,
             announce_resolution=self.announce_resolutions,
         )
-        msg = paxos_aggregate.propose_value(value, assume_leader=assume_leader)
-        paxos_aggregate.receive_message(msg)
+        paxos_aggregate.propose_value(value, assume_leader=assume_leader)
         return paxos_aggregate
 
     def get_final_value(self, key: UUID) -> PaxosAggregate:
@@ -76,7 +75,7 @@ class PaxosApplication(CachingApplication[Aggregate], ProcessApplication[Aggrega
     def policy(
         self,
         domain_event: AggregateEvent[TAggregate],
-        process_event: ProcessEvent,
+        process_event: ProcessingEvent,
     ) -> None:
         """
         Processes paxos "message announced" events of other applications
