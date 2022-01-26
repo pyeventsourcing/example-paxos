@@ -13,8 +13,8 @@ from unittest import TestCase
 import eventsourcing.utils
 from eventsourcing.postgres import PostgresDatastore
 from eventsourcing.system import MultiThreadedRunner, Runner, SingleThreadedRunner
+from eventsourcing.tests.persistence import tmpfile_uris
 from eventsourcing.tests.postgres_utils import drop_postgres_table
-from eventsourcing.tests.ramdisk import tmpfile_uris
 from eventsourcing.utils import retry
 
 from keyvaluestore.application import KeyValueReplica

@@ -12,12 +12,11 @@ from typing import (
 )
 from uuid import NAMESPACE_URL, UUID, uuid4, uuid5
 
-from eventsourcing.application import ProcessingEvent
+from eventsourcing.application import Cache, LRUCache, ProcessingEvent, EventSourcedLog
 from eventsourcing.domain import Aggregate, AggregateEvent, TAggregate
 from eventsourcing.persistence import IntegrityError
 from eventsourcing.utils import get_topic, resolve_topic
 
-from paxossystem.cache import Cache, LRUCache
 from paxossystem.composable import Nack, Promise
 from replicatedstatemachine.commandfutures import CommandFuture
 from replicatedstatemachine.domainmodel import (
@@ -26,7 +25,6 @@ from replicatedstatemachine.domainmodel import (
     LeadershipElection,
     CommandLogged,
 )
-from replicatedstatemachine.eventsourcedlog import EventSourcedLog
 from replicatedstatemachine.exceptions import (
     CommandExecutionError,
     PaxosProtocolError,

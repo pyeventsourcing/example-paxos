@@ -2,12 +2,11 @@ from typing import Any, Mapping, Optional, Type
 from uuid import UUID
 
 from eventsourcing.application import AggregateNotFound, ProcessingEvent
-from eventsourcing.domain import Aggregate, AggregateEvent, TAggregate
+from eventsourcing.domain import AggregateEvent, TAggregate
 from eventsourcing.persistence import Transcoder
 from eventsourcing.system import ProcessApplication
 from eventsourcing.utils import get_topic
 
-from paxossystem.cache import CachingApplication
 from paxossystem.composable import PaxosMessage
 from paxossystem.domainmodel import PaxosAggregate
 from paxossystem.transcodings import (
@@ -23,9 +22,9 @@ from paxossystem.transcodings import (
 )
 
 
-class PaxosApplication(CachingApplication[Aggregate], ProcessApplication[Aggregate]):
+class PaxosApplication(ProcessApplication):
     num_participants: int = 1
-    follow_topics = [
+    notify_topics = [
         get_topic(PaxosAggregate.MessageAnnounced),
     ]
 
